@@ -162,7 +162,7 @@ jobs:
     name: Deploy to OCI
     needs: [build]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && secrets.OCI_HOST != ''
+    if: github.ref == 'refs/heads/main' && ${{ secrets.OCI_HOST }}
 
     steps:
       - name: Checkout code
