@@ -163,7 +163,12 @@ jobs:
           name: backend-jar
           path: ./jar
 
-      # 1. SCP: 프론트엔드 빌드 파일 전송
+      - name: Rename downloaded JAR to app.jar
+        run: |
+          echo "Renaming JAR..."
+          mv jar/*.jar app.jar
+          ls -l app.jar
+
       - name: Copy frontend dist to Server
         uses: appleboy/scp-action@master
         with:
