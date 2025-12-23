@@ -198,11 +198,12 @@ jobs:
               echo "Error: PROJECT_ROOT not found at \$PROJECT_ROOT. Please provision code beforehand."
               exit 1
             fi
+            sudo chown -R ubuntu:ubuntu "\$PROJECT_ROOT" || true
             cd "\$PROJECT_ROOT"
           
             # 2. 환경 변수 파일 생성
             if [ ! -f .env ]; then
-              cat > .env << ENV_EOF
+              sudo tee .env > /dev/null << ENV_EOF
           SPRING_PROFILES_ACTIVE=prod
           SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${DB_NAME}
           SPRING_DATASOURCE_USERNAME=${DB_USER}
