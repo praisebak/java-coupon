@@ -163,25 +163,6 @@ jobs:
           name: backend-jar
           path: ./jar
 
-      - name: List downloaded JAR files
-        run: |
-          echo "Contents of ./jar directory:"
-          ls -la jar/ || echo "jar directory not found"
-          echo "Looking for JAR files:"
-          find jar -name "*.jar" 2>/dev/null || echo "No JAR files found"
-
-      - name: Rename JAR to app.jar
-        run: |
-          JAR_FILE=$(find jar -name "*.jar" | head -1)
-          if [ -z "$JAR_FILE" ]; then
-            echo "Error: No JAR file found in jar/ directory"
-            exit 1
-          fi
-          echo "Found JAR file: $JAR_FILE"
-          mv "$JAR_FILE" app.jar
-          ls -lh app.jar
-          echo "Successfully renamed to app.jar"
-
       # 1. SCP: 프론트엔드 빌드 파일 전송
       - name: Copy frontend dist to Server
         uses: appleboy/scp-action@master
@@ -193,27 +174,23 @@ jobs:
           target: "/home/ubuntu/coupon-frontend/dist"
           strip_components: 1
 
+      # 2. SCP: 백엔드 JAR 파일 전송
+      - name: Copy backend JAR to Server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.OCI_HOST }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          source: "./jar/*.jar"
+          target: "/home/ubuntu/coupon/app.jar"
+          strip_components: 0
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.OCI_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
-
-      - name: Copy backend JAR to Server via SSH
-        run: |
-          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
-            app.jar ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/app.jar
-
-      - name: Copy Dockerfile.backend to Server
-        run: |
-          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
-            Dockerfile.backend ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/Dockerfile.backend
-
-      - name: Copy docker-compose.prod.yml to Server
-        run: |
-          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
-            docker-compose.prod.yml ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/docker-compose.prod.yml
 
       - name: Deploy to OCI
         env:
@@ -231,46 +208,19 @@ jobs:
             FRONTEND_SOURCE="/home/ubuntu/coupon-frontend/dist"
           
             echo "Deploying to \$PROJECT_ROOT..."
+            chmod 644 app.jar
           
-            # 1. 프로젝트 디렉토리로 이동
-            if [ ! -d "\$PROJECT_ROOT" ]; then
-              echo "Error: PROJECT_ROOT not found at \$PROJECT_ROOT. Please provision code beforehand."
-              exit 1
-            fi
-            cd "\$PROJECT_ROOT"
-            
-            # 2. JAR 파일 확인 및 처리 (폴더로 복사된 경우 대응)
-            if [ -d app.jar ]; then
-              echo "Warning: app.jar is a directory, removing it"
-              rm -rf app.jar
-            fi
-            
-            if [ -f app.jar ]; then
-              chmod 644 app.jar
-              echo "app.jar ready for deployment ($(ls -lh app.jar | awk '{print $5}'))"
-            else
-              echo "Error: app.jar not found at \$PROJECT_ROOT/app.jar"
-              echo "Listing files in \$PROJECT_ROOT:"
-              ls -la
-              exit 1
-            fi
-          
-            # 3. 환경 변수 파일 생성 (.env 파일에 docker-compose 변수 포함)
+            # 3. 환경 변수 파일 생성
             if [ ! -f .env ]; then
               sudo tee .env > /dev/null << ENV_EOF
-          DB_NAME=${DB_NAME}
-          DB_USER=${DB_USER}
-          DB_PASSWORD=${DB_PASSWORD}
-          DB_ROOT_PASSWORD=${DB_PASSWORD:-root}
+          SPRING_PROFILES_ACTIVE=prod
+          SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${DB_NAME}
+          SPRING_DATASOURCE_USERNAME=${DB_USER}
+          SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
+          SPRING_DATA_REDIS_HOST=redis
+          SPRING_DATA_REDIS_PORT=6379
           ENV_EOF
-            else
-              # .env 파일이 있으면 DB 변수만 업데이트
-              sudo sed -i "s/^DB_NAME=.*/DB_NAME=${DB_NAME}/" .env || echo "DB_NAME=${DB_NAME}" | sudo tee -a .env
-              sudo sed -i "s/^DB_USER=.*/DB_USER=${DB_USER}/" .env || echo "DB_USER=${DB_USER}" | sudo tee -a .env
-              sudo sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${DB_PASSWORD}/" .env || echo "DB_PASSWORD=${DB_PASSWORD}" | sudo tee -a .env
             fi
-            echo "Environment variables set in .env file"
-            sudo chmod 644 .env
           
             # 4. Docker Compose 실행 (JAR 파일은 볼륨으로 마운트)
             sudo docker-compose -f docker-compose.prod.yml down || true
@@ -280,8 +230,3 @@ jobs:
             sudo docker image prune -f
             sudo docker-compose -f docker-compose.prod.yml ps
           EOF
-
-      - name: Health Check
-        run: |
-          sleep 10
-          curl -f http://${{ secrets.OCI_HOST }}:8080/actuator/health || echo "Health check failed"
