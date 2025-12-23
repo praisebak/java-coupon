@@ -181,8 +181,8 @@ jobs:
           host: ${{ secrets.OCI_HOST }}
           username: ubuntu
           key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          source: "./jar/*.jar"
-          target: "/home/ubuntu/coupon/app.jar"
+          source: "*.jar"
+          target: "/home/ubuntu/coupon"
           strip_components: 0
 
       - name: Setup SSH
