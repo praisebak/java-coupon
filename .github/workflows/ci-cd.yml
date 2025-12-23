@@ -163,10 +163,24 @@ jobs:
           name: backend-jar
           path: ./jar
 
+      - name: List downloaded JAR files
+        run: |
+          echo "Contents of ./jar directory:"
+          ls -la jar/ || echo "jar directory not found"
+          echo "Looking for JAR files:"
+          find jar -name "*.jar" 2>/dev/null || echo "No JAR files found"
+
       - name: Rename JAR to app.jar
         run: |
-          mv jar/*.jar app.jar
-          echo "Renamed JAR to app.jar"
+          JAR_FILE=$(find jar -name "*.jar" | head -1)
+          if [ -z "$JAR_FILE" ]; then
+            echo "Error: No JAR file found in jar/ directory"
+            exit 1
+          fi
+          echo "Found JAR file: $JAR_FILE"
+          mv "$JAR_FILE" app.jar
+          ls -lh app.jar
+          echo "Successfully renamed to app.jar"
 
       # 1. SCP: 프론트엔드 빌드 파일 전송
       - name: Copy frontend dist to Server
@@ -179,22 +193,18 @@ jobs:
           target: "/home/ubuntu/coupon-frontend/dist"
           strip_components: 1
 
-      # 2. SCP: 백엔드 JAR 파일 전송
-      - name: Copy backend JAR to Server
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ secrets.OCI_HOST }}
-          username: ubuntu
-          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          source: "./app.jar"
-          target: "/home/ubuntu/coupon/app.jar"
-
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.OCI_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
+
+      # 2. SSH로 백엔드 JAR 파일 전송 (scp 명령 직접 사용)
+      - name: Copy backend JAR to Server via SSH
+        run: |
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+            app.jar ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/app.jar
 
       - name: Deploy to OCI
         env:
@@ -220,13 +230,21 @@ jobs:
             fi
             cd "\$PROJECT_ROOT"
             
-            # 2. JAR 파일 확인
-            if [ ! -f app.jar ]; then
+            # 2. JAR 파일 확인 및 처리 (폴더로 복사된 경우 대응)
+            if [ -d app.jar ]; then
+              echo "Warning: app.jar is a directory, removing it"
+              rm -rf app.jar
+            fi
+            
+            if [ -f app.jar ]; then
+              chmod 644 app.jar
+              echo "app.jar ready for deployment ($(ls -lh app.jar | awk '{print $5}'))"
+            else
               echo "Error: app.jar not found at \$PROJECT_ROOT/app.jar"
+              echo "Listing files in \$PROJECT_ROOT:"
+              ls -la
               exit 1
             fi
-            chmod 644 app.jar
-            echo "app.jar ready for deployment"
           
             # 3. 환경 변수 파일 생성
             if [ ! -f .env ]; then
