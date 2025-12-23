@@ -1,5 +1,5 @@
-# JAR 파일 실행용 Dockerfile (CI/CD에서 빌드된 JAR 사용)
-# docker-compose에서 볼륨 마운트로 app.jar를 제공하므로 COPY 불필요
+# 실행용 Dockerfile (CI/CD에서 빌드된 JAR 사용)
+# docker-compose에서 볼륨 마운트로 app.jar 제공: ./app.jar:/app/app.jar
 FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
@@ -8,6 +8,9 @@ WORKDIR /app
 # COPY app.jar app.jar  # 볼륨 마운트 사용 시 불필요
 
 EXPOSE 8080
+
+# 프로파일은 docker-compose의 environment로 설정됨
+# ENV SPRING_PROFILES_ACTIVE=prod  # docker-compose에서 설정
 
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
