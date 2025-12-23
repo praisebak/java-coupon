@@ -157,17 +157,33 @@ jobs:
           name: frontend-build
           path: ./dist
 
-      # 1. SCP: /opt 대신 권한이 확실한 홈 디렉토리로 전송
-      - name: Copy dist to Server (Home Dir)
+      - name: Download backend JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-jar
+          path: ./jar
+
+      # 1. SCP: 프론트엔드 빌드 파일 전송
+      - name: Copy frontend dist to Server
         uses: appleboy/scp-action@master
         with:
           host: ${{ secrets.OCI_HOST }}
           username: ubuntu
           key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
           source: "./dist/*"
-          # 유저가 요청한 경로: /home/ubuntu/coupon-frontend
           target: "/home/ubuntu/coupon-frontend/dist"
           strip_components: 1
+
+      # 2. SCP: 백엔드 JAR 파일 전송
+      - name: Copy backend JAR to Server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.OCI_HOST }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          source: "./jar/*.jar"
+          target: "/home/ubuntu/coupon/jar"
+          strip_components: 0
 
       - name: Setup SSH
         run: |
@@ -201,7 +217,16 @@ jobs:
             sudo chown -R ubuntu:ubuntu "\$PROJECT_ROOT" || true
             cd "\$PROJECT_ROOT"
           
-            # 2. 환경 변수 파일 생성
+            # 2. JAR 파일 확인 및 준비
+            if [ ! -f jar/*.jar ]; then
+              echo "Error: JAR file not found in jar/ directory. Please check SCP step."
+              exit 1
+            fi
+            # JAR 파일을 app.jar로 이름 통일 (docker-compose에서 사용)
+            cp jar/*.jar app.jar || true
+            chmod 644 app.jar
+          
+            # 3. 환경 변수 파일 생성
             if [ ! -f .env ]; then
               sudo tee .env > /dev/null << ENV_EOF
           SPRING_PROFILES_ACTIVE=prod
@@ -213,11 +238,11 @@ jobs:
           ENV_EOF
             fi
           
-            # 3. Docker Compose 실행
+            # 4. Docker Compose 실행 (JAR 파일은 볼륨으로 마운트)
             sudo docker-compose -f docker-compose.prod.yml down || true
-            sudo docker-compose -f docker-compose.prod.yml up -d
+            sudo docker-compose -f docker-compose.prod.yml up -d --build
           
-            # 4. 정리
+            # 5. 정리
             sudo docker image prune -f
             sudo docker-compose -f docker-compose.prod.yml ps
           EOF

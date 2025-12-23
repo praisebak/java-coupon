@@ -11,7 +11,7 @@ services:
       - "8080:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=prod
-      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/coupon_db
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${DB_NAME}
       - SPRING_DATASOURCE_USERNAME=${DB_USER}
       - SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
       - SPRING_DATA_REDIS_HOST=redis
@@ -22,6 +22,9 @@ services:
     restart: unless-stopped
     networks:
       - coupon-network
+    # CI/CD에서 SCP로 전송된 app.jar를 볼륨으로 마운트
+    volumes:
+      - ./app.jar:/app/app.jar
 
   # 프론트엔드 서비스
   frontend:
