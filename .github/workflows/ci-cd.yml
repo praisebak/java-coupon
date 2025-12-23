@@ -214,9 +214,10 @@ jobs:
             # 3. 환경 변수 파일 생성
             if [ ! -f .env ]; then
               sudo tee .env > /dev/null << ENV_EOF
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME=${DB_NAME}
+          DB_USER=${DB_USER}
+          DB_PASSWORD=${DB_PASSWORD}
+          DB_ROOT_PASSWORD=${DB_PASSWORD}
           SPRING_PROFILES_ACTIVE=prod
           SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${DB_NAME}
           SPRING_DATASOURCE_USERNAME=${DB_USER}
