@@ -179,18 +179,18 @@ jobs:
           target: "/home/ubuntu/coupon-frontend/dist"
           strip_components: 1
 
-      - name: Copy backend JAR to Server via SSH
-        run: |
-          sudo chmod 644 app.jar
-          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
-            app.jar ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/app.jar
-
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.OCI_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy backend JAR to Server via SSH
+        run: |
+          sudo chmod 644 app.jar
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+            app.jar ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/app.jar
 
       - name: Deploy to OCI
         env:
