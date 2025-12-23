@@ -200,11 +200,20 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
 
-      # 2. SSH로 백엔드 JAR 파일 전송 (scp 명령 직접 사용)
       - name: Copy backend JAR to Server via SSH
         run: |
           scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
             app.jar ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/app.jar
+
+      - name: Copy Dockerfile.backend to Server
+        run: |
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+            Dockerfile.backend ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/Dockerfile.backend
+
+      - name: Copy docker-compose.prod.yml to Server
+        run: |
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+            docker-compose.prod.yml ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/docker-compose.prod.yml
 
       - name: Deploy to OCI
         env:
@@ -246,17 +255,22 @@ jobs:
               exit 1
             fi
           
-            # 3. 환경 변수 파일 생성
+            # 3. 환경 변수 파일 생성 (.env 파일에 docker-compose 변수 포함)
             if [ ! -f .env ]; then
               sudo tee .env > /dev/null << ENV_EOF
-          SPRING_PROFILES_ACTIVE=prod
-          SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${DB_NAME}
-          SPRING_DATASOURCE_USERNAME=${DB_USER}
-          SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
-          SPRING_DATA_REDIS_HOST=redis
-          SPRING_DATA_REDIS_PORT=6379
+          DB_NAME=${DB_NAME}
+          DB_USER=${DB_USER}
+          DB_PASSWORD=${DB_PASSWORD}
+          DB_ROOT_PASSWORD=${DB_PASSWORD:-root}
           ENV_EOF
+            else
+              # .env 파일이 있으면 DB 변수만 업데이트
+              sudo sed -i "s/^DB_NAME=.*/DB_NAME=${DB_NAME}/" .env || echo "DB_NAME=${DB_NAME}" | sudo tee -a .env
+              sudo sed -i "s/^DB_USER=.*/DB_USER=${DB_USER}/" .env || echo "DB_USER=${DB_USER}" | sudo tee -a .env
+              sudo sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${DB_PASSWORD}/" .env || echo "DB_PASSWORD=${DB_PASSWORD}" | sudo tee -a .env
             fi
+            echo "Environment variables set in .env file"
+            sudo chmod 644 .env
           
             # 4. Docker Compose 실행 (JAR 파일은 볼륨으로 마운트)
             sudo docker-compose -f docker-compose.prod.yml down || true
