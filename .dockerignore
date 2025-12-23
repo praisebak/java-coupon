@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.idea
+.vscode
+*.iml
+*.swp
+*.swo
+
+# Build outputs
+build/
+bin/
+out/
+target/
+dist/
+
+# Dependencies
+node_modules/
+.gradle/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# CI/CD
+.github/
+
+# Documentation
+*.md
+!README.md
+
