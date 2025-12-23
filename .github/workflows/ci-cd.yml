@@ -168,6 +168,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Download frontend build
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: ./dist
+
+      - name: Copy dist to Server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.OCI_HOST }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          source: "./dist/*"
+          target: "/opt/coupon-front/dist"
+          strip_components: 1
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
