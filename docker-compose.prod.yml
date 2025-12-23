@@ -1,19 +1,16 @@
 version: '3.8'
 
 services:
-  # 백엔드 서비스
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
     container_name: coupon-backend
-    env_file:
-      - .env
     ports:
-      - "8080:8080"
+      - "8081:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=prod
-      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${DB_NAME:-coupon_db}
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/coupon_db
       - SPRING_DATASOURCE_USERNAME=${DB_USER}
       - SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
       - SPRING_DATA_REDIS_HOST=redis
@@ -24,11 +21,9 @@ services:
     restart: unless-stopped
     networks:
       - coupon-network
-    # CI/CD에서 SCP로 전송된 app.jar를 볼륨으로 마운트
     volumes:
       - ./app.jar:/app/app.jar
 
-  # MySQL 데이터베이스
   mysql:
     image: mysql:8.0
     container_name: coupon-mysql
@@ -48,12 +43,11 @@ services:
       - coupon-network
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
 
-  # Redis 캐시
   redis:
     image: redis:alpine
     container_name: coupon-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
