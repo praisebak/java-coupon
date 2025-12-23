@@ -162,13 +162,14 @@ jobs:
     name: Deploy to OCI
     needs: [build]
     runs-on: ubuntu-latest
-    if: ${{ github.ref == 'refs/heads/main' && secrets.OCI_HOST != '' }}
+    if: github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup SSH
+        if: ${{ secrets.OCI_HOST != '' && secrets.OCI_SSH_PRIVATE_KEY != '' }}
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.OCI_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
@@ -176,6 +177,7 @@ jobs:
           ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
 
       - name: Deploy to OCI
+        if: ${{ secrets.OCI_HOST != '' && secrets.OCI_SSH_PRIVATE_KEY != '' }}
         env:
           OCI_USER: ubuntu
           OCI_HOST: ${{ secrets.OCI_HOST }}
@@ -221,6 +223,7 @@ jobs:
           EOF
 
       - name: Health Check
+        if: ${{ secrets.OCI_HOST != '' }}
         run: |
           sleep 10
           curl -f http://${{ secrets.OCI_HOST }}:8080/actuator/health || echo "Health check failed"
