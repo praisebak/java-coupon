@@ -105,8 +105,12 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./frontend
-        run: npm install
-
+        run: |
+          echo "문제의 package-lock.json 삭제 중..."
+          rm -f package-lock.json
+          
+          echo "package.json만 보고 의존성 새로 설치..."
+          npm install
       - name: Lint check
         working-directory: ./frontend
         run: npm run lint || echo "Lint script not found, skipping..."
