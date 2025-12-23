@@ -174,16 +174,10 @@ jobs:
           target: "/home/ubuntu/coupon-frontend/dist"
           strip_components: 1
 
-      # 2. SCP: 백엔드 JAR 파일 전송
-      - name: Copy backend JAR to Server
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ secrets.OCI_HOST }}
-          username: ubuntu
-          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          source: "*.jar"
-          target: "/home/ubuntu/coupon"
-          strip_components: 0
+      - name: Copy backend JAR to Server via SSH
+        run: |
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+            app.jar ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/app.jar
 
       - name: Setup SSH
         run: |
