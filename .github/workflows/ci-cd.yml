@@ -208,8 +208,9 @@ jobs:
             FRONTEND_SOURCE="/home/ubuntu/coupon-frontend/dist"
           
             echo "Deploying to \$PROJECT_ROOT..."
+            cd \$PROJECT_ROOT
             chmod 644 app.jar
-          
+
             # 3. 환경 변수 파일 생성
             if [ ! -f .env ]; then
               sudo tee .env > /dev/null << ENV_EOF
