@@ -181,7 +181,7 @@ jobs:
 
       - name: Copy backend JAR to Server via SSH
         run: |
-          chmod 644 app.jar
+          sudo chmod 644 app.jar
           scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
             app.jar ubuntu@${{ secrets.OCI_HOST }}:/home/ubuntu/coupon/app.jar
 
