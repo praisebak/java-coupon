@@ -23,6 +23,7 @@ class MemberCouponController(
 
     @GetMapping("/by-member-id")
     suspend fun getMemberCoupons(@RequestParam("memberId") memberId: Long?): List<MemberCouponResponse> {
+        requireNotNull(memberId) { "memberId는 필수입니다." }
         return memberCouponService.findUsableMemberCoupons(memberId)
             .map { MemberCouponResponse.from(it) }
     }

@@ -1,24 +1,87 @@
 package com.couponrefactroing.service
 
 import com.couponrefactroing.domain.MemberCoupon
+import com.couponrefactroing.domain.MemberCouponUseHistory
+import com.couponrefactroing.repository.CouponRepository
 import com.couponrefactroing.repository.MemberCouponRepository
-import kotlinx.coroutines.reactive.asFlow
-import kotlinx.coroutines.flow.toList
+import com.couponrefactroing.repository.MemberCouponUseHistoryRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import java.time.LocalDateTime
 
 @Service
 class MemberCouponService(
-    private val memberCouponRepository: MemberCouponRepository
+    private val couponIssuer: CouponIssuer,
+    private val memberCouponRepository: MemberCouponRepository,
+    private val memberCouponUseHistoryRepository: MemberCouponUseHistoryRepository
 ) {
-    suspend fun findUsableMemberCoupons(memberId: Long?): List<MemberCoupon> {
-        // R2DBC는 non-blocking이므로 withContext 불필요
-        // Flux를 Flow로 변환 후 List로 수집
-        return memberCouponRepository.findByMemberId(memberId)
-            .asFlow()
-            .toList()
+    suspend fun findUsableMemberCoupons(memberId: Long): List<MemberCoupon> {
+        return withContext(Dispatchers.IO) {
+            memberCouponRepository.findByMemberId(memberId)
+        }
     }
 
+    @Transactional
+    suspend fun addMemberCoupon(memberCouponId: Long, memberId: Long) {
+        withContext(Dispatchers.IO) {
+            val memberCoupon = memberCouponRepository.findById(memberCouponId)
+                .orElseThrow { IllegalArgumentException("Member coupon not found") }
+
+            if (!memberCoupon.isSameMember(memberId)) {
+                throw IllegalArgumentException("Member coupon does not belong to this member")
+            }
+
+            // 이미 사용된 쿠폰인지 체크
+            if (memberCoupon.isUsed()) {
+                throw IllegalStateException("이미 사용된 쿠폰입니다.")
+            }
+
+            val now = LocalDateTime.now()
+            memberCoupon.use(now)
+            memberCouponRepository.save(memberCoupon)
+
+            memberCouponUseHistoryRepository.save(MemberCouponUseHistory(
+                memberCouponId = memberCouponId,
+                memberId = memberId,
+                usedAt = now,
+                createdAt = now
+            ))
+        }
+    }
+
+    @Transactional
     suspend fun useCoupon(memberId: Long, memberCouponId: Long) {
-        // TODO: 실제 쿠폰 사용 로직 구현 필요
+        withContext(Dispatchers.IO) {
+            val memberCoupon = memberCouponRepository.findById(memberCouponId)
+                .orElseThrow { IllegalArgumentException("Member coupon not found") }
+
+            if (!memberCoupon.isSameMember(memberId)) {
+                throw IllegalArgumentException("Member coupon does not belong to this member")
+            }
+
+            // 이미 사용된 쿠폰인지 체크
+            if (memberCoupon.isUsed()) {
+                throw IllegalStateException("이미 사용된 쿠폰입니다.")
+            }
+
+            // 중복 사용 이력 체크 (DB 제약 조건 보완)
+            val existingHistory = memberCouponUseHistoryRepository.findByMemberCouponId(memberCouponId)
+            if (existingHistory.isNotEmpty()) {
+                throw IllegalStateException("이미 사용된 쿠폰입니다.")
+            }
+
+            val now = LocalDateTime.now()
+            memberCoupon.use(now)
+            memberCouponRepository.save(memberCoupon)
+
+            memberCouponUseHistoryRepository.save(MemberCouponUseHistory(
+                memberCouponId = memberCouponId,
+                memberId = memberId,
+                usedAt = now,
+                createdAt = now
+            ))
+        }
     }
 }
