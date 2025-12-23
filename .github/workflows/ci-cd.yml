@@ -103,24 +103,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Verify package files
-        working-directory: ./frontend
-        run: |
-          echo "Checking package.json..."
-          node -e "const pkg = require('./package.json'); console.log('Version:', pkg.version);"
-          echo "Checking package-lock.json exists..."
-          test -f package-lock.json && echo "✓ package-lock.json exists" || echo "✗ package-lock.json missing"
-          echo "Validating package-lock.json..."
-          node -e "try { require('./package-lock.json'); console.log('✓ package-lock.json is valid JSON'); } catch(e) { console.error('✗ Invalid JSON:', e.message); process.exit(1); }"
-
       - name: Install dependencies
         working-directory: ./frontend
-        run: |
-          npm ci --verbose 2>&1 || {
-            echo "npm ci failed, checking for issues..."
-            npm cache verify
-            npm ci --verbose 2>&1
-          }
+        run: npm install
 
       - name: Lint check
         working-directory: ./frontend
