@@ -11,11 +11,10 @@ env:
   NODE_VERSION: '18'
 
 jobs:
-  # 백엔드 빌드 및 테스트
+  # 백엔드 빌드 및 테스트 (기존 유지)
   backend:
     name: Backend Build & Test
     runs-on: ubuntu-latest
-
     services:
       mysql:
         image: mysql:8.0
@@ -29,7 +28,6 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=3
-
       redis:
         image: redis:alpine
         ports:
@@ -39,17 +37,14 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=3
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
-
       - name: Cache Gradle packages
         uses: actions/cache@v3
         with:
@@ -59,27 +54,22 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-
       - name: Build with Gradle
         run: ./gradlew build -x test
-
       - name: Run tests
         run: ./gradlew test
         env:
           SPRING_DATASOURCE_URL: jdbc:mysql://localhost:3306/coupon_db
           SPRING_DATASOURCE_USERNAME: root
           SPRING_DATASOURCE_PASSWORD: root
-
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-backend
           path: build/test-results/test/*.xml
-
       - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -87,15 +77,13 @@ jobs:
           name: coverage-backend
           path: build/reports/
 
-  # 프론트엔드 빌드 및 테스트
+  # 프론트엔드 빌드 및 테스트 (기존 유지 + npm install 수정 적용됨)
   frontend:
     name: Frontend Build & Test
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Node.js ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
         with:
@@ -103,65 +91,56 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
+      # [중요] 락파일 이슈 해결을 위해 강제 재설치 로직 유지
       - name: Install dependencies
         working-directory: ./frontend
         run: |
-          echo "문제의 package-lock.json 삭제 중..."
           rm -f package-lock.json
-          
-          echo "package.json만 보고 의존성 새로 설치..."
           npm install
+
       - name: Lint check
         working-directory: ./frontend
         run: npm run lint || echo "Lint script not found, skipping..."
-
       - name: Type check
         working-directory: ./frontend
         run: npx tsc --noEmit || echo "Type check failed but continuing..."
-
       - name: Build frontend
         working-directory: ./frontend
         run: npm run build
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
           path: frontend/dist/
 
-  # 통합 빌드 (백엔드 + 프론트엔드)
+  # 통합 빌드 (기존 유지)
   build:
     name: Build Artifacts
     needs: [backend, frontend]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Download frontend build
         uses: actions/download-artifact@v4
         with:
           name: frontend-build
           path: frontend/dist/
-
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
-
       - name: Build backend JAR
         run: chmod +x gradlew && ./gradlew bootJar
-
       - name: Upload backend artifact
         uses: actions/upload-artifact@v4
         with:
           name: backend-jar
           path: build/libs/*.jar
 
-  # 배포 (OCI SSH 배포)
+  # [수정됨] 배포 (OCI SSH 배포 - 홈 디렉토리 사용)
   deploy:
     name: Deploy to OCI
     needs: [build]
@@ -178,14 +157,16 @@ jobs:
           name: frontend-build
           path: ./dist
 
-      - name: Copy dist to Server
+      # 1. SCP: /opt 대신 권한이 확실한 홈 디렉토리로 전송
+      - name: Copy dist to Server (Home Dir)
         uses: appleboy/scp-action@master
         with:
           host: ${{ secrets.OCI_HOST }}
           username: ubuntu
           key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
           source: "./dist/*"
-          target: "/opt/coupon-front/dist"
+          # 유저가 요청한 경로: /home/ubuntu/coupon-frontend
+          target: "/home/ubuntu/coupon-frontend/dist"
           strip_components: 1
 
       - name: Setup SSH
@@ -195,6 +176,7 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
 
+      # 2. SSH: 프로젝트 폴더도 홈 디렉토리(/home/ubuntu/coupon-system)로 변경
       - name: Deploy to OCI
         env:
           OCI_USER: ubuntu
@@ -202,46 +184,60 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_rsa ${OCI_USER}@${OCI_HOST} << 'EOF'
             set -e
-            
-            # 프로젝트 디렉토리로 이동
-            cd /opt/coupon-system || {
-              sudo mkdir -p /opt/coupon-system
-              sudo chown ubuntu:ubuntu /opt/coupon-system
-              git clone ${{ github.repositoryUrl }} /opt/coupon-system
-              cd /opt/coupon-system
-            }
-            
-            # 최신 코드 가져오기
+          
+            # --- 경로 설정 (홈 디렉토리 기준) ---
+            PROJECT_ROOT="/home/ubuntu/coupon-system"
+            FRONTEND_SOURCE="/home/ubuntu/coupon-frontend/dist"
+          
+            echo "Deploying to $PROJECT_ROOT..."
+          
+            # 1. 프로젝트 디렉토리 준비 (Git Clone)
+            # 폴더가 없으면 새로 만들고 Clone
+            if [ ! -d "$PROJECT_ROOT" ]; then
+              git clone ${{ github.repositoryUrl }} "$PROJECT_ROOT"
+            fi
+          
+            cd "$PROJECT_ROOT"
+          
+            # 2. 최신 코드(Docker config 등) 업데이트
             git fetch origin
             git reset --hard origin/main
             git clean -fd
-            
-            # 환경 변수 파일 생성 (없는 경우)
+          
+            # 3. 프론트엔드 파일 연동
+            # SCP로 받은 파일들을 프로젝트 안의 ./dist 폴더로 복사
+            # (이렇게 하면 docker-compose.yml에서 - ./dist:/usr/share/nginx/html 설정이 그대로 작동함)
+            mkdir -p dist
+            if [ -d "$FRONTEND_SOURCE" ]; then
+                echo "Syncing frontend build files..."
+                cp -r $FRONTEND_SOURCE/* ./dist/
+            else
+                echo "Warning: Frontend build not found at $FRONTEND_SOURCE"
+            fi
+          
+            # 4. 환경 변수 파일 생성
             if [ ! -f .env ]; then
-              cat > .env << EOL
+              cat > .env << ENV_EOF
             SPRING_PROFILES_ACTIVE=prod
             SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${{ secrets.DB_NAME }}
             SPRING_DATASOURCE_USERNAME=${{ secrets.DB_USER }}
             SPRING_DATASOURCE_PASSWORD=${{ secrets.DB_PASSWORD }}
             SPRING_DATA_REDIS_HOST=redis
             SPRING_DATA_REDIS_PORT=6379
-            EOL
+            ENV_EOF
             fi
-            
-            # Docker Compose로 빌드 및 실행
-            docker-compose -f docker-compose.prod.yml down || true
-            docker-compose -f docker-compose.prod.yml build --no-cache
-            docker-compose -f docker-compose.prod.yml up -d
-            
-            # 오래된 이미지 정리
-            docker image prune -f
-            
-            # 컨테이너 상태 확인
-            docker-compose -f docker-compose.prod.yml ps
+          
+            # 5. Docker Compose 실행
+            # sudo가 필요할 수 있으므로 붙임 (ubuntu 유저가 docker 그룹에 있으면 안 붙여도 됨)
+            sudo docker-compose -f docker-compose.prod.yml down || true
+            sudo docker-compose -f docker-compose.prod.yml up -d
+          
+            # 6. 정리
+            sudo docker image prune -f
+            sudo docker-compose -f docker-compose.prod.yml ps
           EOF
 
       - name: Health Check
         run: |
           sleep 10
           curl -f http://${{ secrets.OCI_HOST }}:8080/actuator/health || echo "Health check failed"
-
