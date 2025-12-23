@@ -180,42 +180,43 @@ jobs:
         env:
           OCI_USER: ubuntu
           OCI_HOST: ${{ secrets.OCI_HOST }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
-          ssh -i ~/.ssh/id_rsa ${OCI_USER}@${OCI_HOST} << 'EOF'
+          ssh -i ~/.ssh/id_rsa ${OCI_USER}@${OCI_HOST} << EOF
             set -e
           
             # --- 경로 설정 (홈 디렉토리 기준) ---
             PROJECT_ROOT="/home/ubuntu/coupon"
             FRONTEND_SOURCE="/home/ubuntu/coupon-frontend/dist"
           
-            echo "Deploying to $PROJECT_ROOT..."
+            echo "Deploying to \$PROJECT_ROOT..."
           
             # 1. 프로젝트 디렉토리 존재 확인 (원격 리포지토리 사용 안 함)
-            if [ ! -d "$PROJECT_ROOT" ]; then
-              echo "Error: PROJECT_ROOT not found at $PROJECT_ROOT. Please provision code beforehand."
+            if [ ! -d "\$PROJECT_ROOT" ]; then
+              echo "Error: PROJECT_ROOT not found at \$PROJECT_ROOT. Please provision code beforehand."
               exit 1
             fi
-            cd "$PROJECT_ROOT"
+            cd "\$PROJECT_ROOT"
           
-          
-            # 3. 환경 변수 파일 생성
+            # 2. 환경 변수 파일 생성
             if [ ! -f .env ]; then
               cat > .env << ENV_EOF
-            SPRING_PROFILES_ACTIVE=prod
-            SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${{ secrets.DB_NAME }}
-            SPRING_DATASOURCE_USERNAME=${{ secrets.DB_USER }}
-            SPRING_DATASOURCE_PASSWORD=${{ secrets.DB_PASSWORD }}
-            SPRING_DATA_REDIS_HOST=redis
-            SPRING_DATA_REDIS_PORT=6379
-            ENV_EOF
+          SPRING_PROFILES_ACTIVE=prod
+          SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${DB_NAME}
+          SPRING_DATASOURCE_USERNAME=${DB_USER}
+          SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
+          SPRING_DATA_REDIS_HOST=redis
+          SPRING_DATA_REDIS_PORT=6379
+          ENV_EOF
             fi
           
-            # 4. Docker Compose 실행
-            # sudo가 필요할 수 있으므로 붙임 (ubuntu 유저가 docker 그룹에 있으면 안 붙여도 됨)
+            # 3. Docker Compose 실행
             sudo docker-compose -f docker-compose.prod.yml down || true
             sudo docker-compose -f docker-compose.prod.yml up -d
           
-            # 5. 정리
+            # 4. 정리
             sudo docker image prune -f
             sudo docker-compose -f docker-compose.prod.yml ps
           EOF
