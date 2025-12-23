@@ -182,7 +182,7 @@ jobs:
           username: ubuntu
           key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
           source: "./jar/*.jar"
-          target: "/home/ubuntu/coupon/jar"
+          target: "/home/ubuntu/coupon/app.jar"
           strip_components: 0
 
       - name: Setup SSH
@@ -208,22 +208,6 @@ jobs:
             FRONTEND_SOURCE="/home/ubuntu/coupon-frontend/dist"
           
             echo "Deploying to \$PROJECT_ROOT..."
-          
-            # 1. 프로젝트 디렉토리 존재 확인 (원격 리포지토리 사용 안 함)
-            if [ ! -d "\$PROJECT_ROOT" ]; then
-              echo "Error: PROJECT_ROOT not found at \$PROJECT_ROOT. Please provision code beforehand."
-              exit 1
-            fi
-            sudo chown -R ubuntu:ubuntu "\$PROJECT_ROOT" || true
-            cd "\$PROJECT_ROOT"
-          
-            # 2. JAR 파일 확인 및 준비
-            if [ ! -f jar/*.jar ]; then
-              echo "Error: JAR file not found in jar/ directory. Please check SCP step."
-              exit 1
-            fi
-            # JAR 파일을 app.jar로 이름 통일 (docker-compose에서 사용)
-            cp jar/*.jar app.jar || true
             chmod 644 app.jar
           
             # 3. 환경 변수 파일 생성
