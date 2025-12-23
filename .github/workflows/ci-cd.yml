@@ -157,44 +157,71 @@ jobs:
           name: backend-jar
           path: build/libs/*.jar
 
-  # 배포 (학습 프로젝트용 - 간단한 SSH 배포)
+  # 배포 (OCI SSH 배포)
   deploy:
-    name: Deploy to Server
+    name: Deploy to OCI
     needs: [build]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && secrets.OCI_HOST
     
     steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: backend-jar
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # 옵션 1: SSH로 VM에 배포 (Docker Compose 사용)
-      - name: Deploy via SSH
-        if: ${{ secrets.VM_HOST != '' }}
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            cd /opt/coupon-system || git clone ${{ github.repositoryUrl }} /opt/coupon-system && cd /opt/coupon-system
-            git pull origin main
-            docker-compose -f docker-compose.prod.yml down
-            docker-compose -f docker-compose.prod.yml up -d --build
-
-      # 옵션 2: Railway 배포 (Railway CLI 사용)
-      - name: Deploy to Railway
-        if: ${{ secrets.RAILWAY_TOKEN != '' }}
-        uses: bervProject/railway-deploy@main
-        with:
-          railway_token: ${{ secrets.RAILWAY_TOKEN }}
-          service: backend
-
-      # 옵션 3: Render 배포
-      - name: Trigger Render Deploy
-        if: ${{ secrets.RENDER_SERVICE_ID != '' }}
+      - name: Setup SSH
         run: |
-          curl -X POST "https://api.render.com/deploy/srv/${{ secrets.RENDER_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}"
+          mkdir -p ~/.ssh
+          echo "${{ secrets.OCI_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to OCI
+        env:
+          OCI_USER: ubuntu
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_rsa ${OCI_USER}@${OCI_HOST} << 'EOF'
+            set -e
+            
+            # 프로젝트 디렉토리로 이동
+            cd /opt/coupon-system || {
+              sudo mkdir -p /opt/coupon-system
+              sudo chown ubuntu:ubuntu /opt/coupon-system
+              git clone ${{ github.repositoryUrl }} /opt/coupon-system
+              cd /opt/coupon-system
+            }
+            
+            # 최신 코드 가져오기
+            git fetch origin
+            git reset --hard origin/main
+            git clean -fd
+            
+            # 환경 변수 파일 생성 (없는 경우)
+            if [ ! -f .env ]; then
+              cat > .env << EOL
+            SPRING_PROFILES_ACTIVE=prod
+            SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${{ secrets.DB_NAME }}
+            SPRING_DATASOURCE_USERNAME=${{ secrets.DB_USER }}
+            SPRING_DATASOURCE_PASSWORD=${{ secrets.DB_PASSWORD }}
+            SPRING_DATA_REDIS_HOST=redis
+            SPRING_DATA_REDIS_PORT=6379
+            EOL
+            fi
+            
+            # Docker Compose로 빌드 및 실행
+            docker-compose -f docker-compose.prod.yml down || true
+            docker-compose -f docker-compose.prod.yml build --no-cache
+            docker-compose -f docker-compose.prod.yml up -d
+            
+            # 오래된 이미지 정리
+            docker image prune -f
+            
+            # 컨테이너 상태 확인
+            docker-compose -f docker-compose.prod.yml ps
+          EOF
+
+      - name: Health Check
+        run: |
+          sleep 10
+          curl -f http://${{ secrets.OCI_HOST }}:8080/actuator/health || echo "Health check failed"
 
