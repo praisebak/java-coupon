@@ -1,0 +1,146 @@
+name: Deploy to OCI
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  JAVA_VERSION: '21'
+  NODE_VERSION: '18'
+
+jobs:
+  # 백엔드 빌드 및 테스트
+  backend-test:
+    name: Backend Build & Test
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: coupon_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      - name: Build and test
+        run: chmod +x gradlew && ./gradlew build
+        env:
+          SPRING_DATASOURCE_URL: jdbc:mysql://localhost:3306/coupon_db
+          SPRING_DATASOURCE_USERNAME: root
+          SPRING_DATASOURCE_PASSWORD: root
+
+  # 프론트엔드 빌드 및 테스트
+  frontend-test:
+    name: Frontend Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ./frontend
+        run: npm run build
+
+  # OCI 서버에 SSH로 배포
+  deploy:
+    name: Deploy to OCI
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.OCI_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to OCI
+        env:
+          OCI_USER: ubuntu
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_rsa ${OCI_USER}@${OCI_HOST} << 'EOF'
+            set -e
+            
+            # 프로젝트 디렉토리로 이동
+            cd /opt/coupon-system || {
+              sudo mkdir -p /opt/coupon-system
+              sudo chown $USER:$USER /opt/coupon-system
+              git clone ${{ github.repositoryUrl }} /opt/coupon-system
+              cd /opt/coupon-system
+            }
+            
+            # 최신 코드 가져오기
+            git fetch origin
+            git reset --hard origin/main
+            git clean -fd
+            
+            # 환경 변수 파일 생성 (없는 경우)
+            if [ ! -f .env ]; then
+              cat > .env << EOL
+            SPRING_PROFILES_ACTIVE=prod
+            SPRING_DATASOURCE_URL=jdbc:mysql://${{ secrets.DB_HOST }}:3306/${{ secrets.DB_NAME }}
+            SPRING_DATASOURCE_USERNAME=${{ secrets.DB_USER }}
+            SPRING_DATASOURCE_PASSWORD=${{ secrets.DB_PASSWORD }}
+            SPRING_DATA_REDIS_HOST=${{ secrets.REDIS_HOST }}
+            SPRING_DATA_REDIS_PORT=${{ secrets.REDIS_PORT }}
+            EOL
+            fi
+            
+            # Docker Compose로 빌드 및 실행
+            docker-compose -f docker-compose.prod.yml down || true
+            docker-compose -f docker-compose.prod.yml build --no-cache
+            docker-compose -f docker-compose.prod.yml up -d
+            
+            # 오래된 이미지 정리
+            docker image prune -f
+            
+            # 컨테이너 상태 확인
+            docker-compose -f docker-compose.prod.yml ps
+          EOF
+
+      - name: Health Check
+        run: |
+          sleep 10
+          curl -f http://${{ secrets.OCI_HOST }}:8080/actuator/health || echo "Health check failed"
+
