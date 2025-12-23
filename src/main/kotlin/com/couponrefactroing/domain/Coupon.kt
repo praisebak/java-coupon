@@ -1,117 +1,84 @@
-package coupon.coupon.domain
+package com.couponrefactroing.domain
 
 import jakarta.persistence.*
-import lombok.AccessLevel
-import lombok.Getter
-import lombok.NoArgsConstructor
 import java.time.LocalDateTime
 
 @Entity
-@Table(name = "coupon")
-@Getter
-@NoArgsConstructor(access = AccessLevel.PROTECTED)
-class Coupon {
+@Table(name = "coupons")
+class Coupon(
+    title: String,
+    discountAmount: Int,
+    minimumOrderPrice: Int,
+    totalQuantity: Int,
+    validStartedAt: LocalDateTime,
+    validEndedAt: LocalDateTime
+) {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
-    private var id: Long? = null
+    val id: Long? = null
 
-    @Column(name = "discount_amount")
-    private var discountAmount = 0
+    @Column(nullable = false)
+    var title: String = title
 
-    @Column(name = "minimum_order_price")
-    private var minimumOrderPrice = 0
+    @Column(nullable = false)
+    var discountAmount: Int = discountAmount
 
-    @Column(name = "coupon_status", columnDefinition = "VARCHAR(30)")
-    @Enumerated(value = EnumType.STRING)
-    private var couponStatus: CouponStatus? = null
+    @Column(nullable = false)
+    var minimumOrderPrice: Int = minimumOrderPrice
 
-    @Column(name = "issuable", columnDefinition = "BOOLEAN")
-    private var issuable = false
+    // 전체 발행 가능한 수량 (재고)
+    @Column(nullable = true)
+    var totalQuantity: Int? = totalQuantity
 
-    @Column(name = "usable", columnDefinition = "BOOLEAN")
-    private var usable = false
+    // 현재까지 발행된 수량
+    @Column(nullable = false)
+    var issuedQuantity: Int = 0
 
-    @Column(name = "issue_started_at", columnDefinition = "DATETIME(6)")
-    private var issueStartedAt: LocalDateTime? = null
+    @Column(nullable = false)
+    var validStartedAt: LocalDateTime = validStartedAt
 
-    @Column(name = "issue_ended_at", columnDefinition = "DATETIME(6)")
-    private var issueEndedAt: LocalDateTime? = null
+    @Column(nullable = false)
+    var validEndedAt: LocalDateTime = validEndedAt
 
-    @Column(name = "limit_type", columnDefinition = "VARCHAR(20)")
-    @Enumerated(value = EnumType.STRING)
-    private var limitType: CouponLimitType? = null
+    // 낙관적 락을 위한 버전 필드
+    @Version
+    var version: Long = 0
 
-    @Column(name = "issue_limit")
-    private var issueLimit: Long? = null
+    // 생성 시점 자동 기록
+    @Column(updatable = false)
+    val createdAt: LocalDateTime = LocalDateTime.now()
 
-    @Column(name = "issue_count")
-    private var issueCount: Long? = null
-
-    @Column(name = "use_limit")
-    private var useLimit: Long? = null
-
-    @Column(name = "use_count")
-    private var useCount: Long? = null
-
-    @Column(name = "created_at", columnDefinition = "DATETIME(6)")
-    private var createdAt: LocalDateTime? = null
-
-    @Column(name = "modified_at", columnDefinition = "DATETIME(6)")
-    private var modifiedAt: LocalDateTime? = null
-
-    fun issue() {
-        require(!(this.issueStartedAt!!.isAfter(LocalDateTime.now()) || this.issueEndedAt!!.isBefore(LocalDateTime.now()))) { "쿠폰을 발급할 수 없는 시간입니다." }
-        require(!(couponStatus.isNotIssuable() || !this.issuable)) { "쿠폰을 발급할 수 없는 상태입니다." }
-        if (this.limitType.isNotIssueCountLimit()) {
-            return
-        }
-        require(this.issueLimit!! > this.issueCount!!) { "쿠폰을 더 이상 발급할 수 없습니다." }
-        this.issueCount = this.issueCount!! + 1
+    /**
+     * 비즈니스 로직: 쿠폰 발급 시도
+     * - 기간 확인
+     * - 재고 확인 (낙관적 락에 의해 동시성 제어됨)
+     * - 수량 증가
+     */
+    fun decreaseQuantity() { // 혹은 issue() 라고 명명
+        verifyExpiration()
+        verifyQuantity()
+        this.issuedQuantity += 1
     }
 
-    fun isIssuableCoupon(localDateTime: LocalDateTime?): Boolean {
-        if (this.issueStartedAt!!.isAfter(localDateTime) || this.issueEndedAt!!.isBefore(localDateTime)) {
-            return false
+    /**
+     * 검증 로직: 발급 가능한 시간인지 확인
+     */
+    private fun verifyExpiration() {
+        val now = LocalDateTime.now()
+        if (now.isBefore(validStartedAt) || now.isAfter(validEndedAt)) {
+            throw IllegalStateException("쿠폰 발급 기간이 아닙니다.")
         }
-        if (couponStatus.isNotIssuable() || !this.issuable) {
-            return false
-        }
-        if (this.limitType.isNotIssueCountLimit()) {
-            return true
-        }
-        return this.issueLimit!! > this.issueCount!!
     }
 
-    fun use() {
-        require(!(couponStatus.isNotUsable() || !this.usable)) { "쿠폰 사용이 불가능합니다." }
-        if (this.limitType.isNotUseCountLimit()) {
-            return
+    /**
+     * 검증 로직: 재고가 남아있는지 확인
+     */
+    private fun verifyQuantity() {
+        if (totalQuantity == null) return // 무제한 쿠폰인 경우
+
+        if (issuedQuantity >= totalQuantity!!) {
+            throw IllegalStateException("준비된 쿠폰이 모두 소진되었습니다.")
         }
-        require(this.useLimit!! > this.useCount!!) { "쿠폰을 더 이상 사용할 수 없습니다." }
-    }
-
-    val isUsableCoupon: Boolean
-        get() {
-            if (couponStatus.isNotUsable() || !this.usable) {
-                return false
-            }
-            if (this.limitType.isNotUseCountLimit()) {
-                return true
-            }
-            return this.useLimit!! > this.useCount!!
-        }
-
-    fun setStatus(couponStatus: CouponStatus) {
-        this.couponStatus = couponStatus
-    }
-
-    fun setIssuable(issuable: Boolean) {
-        this.issuable = issuable
-    }
-
-    fun setUsable(usable: Boolean) {
-        this.usable = usable
     }
 }
