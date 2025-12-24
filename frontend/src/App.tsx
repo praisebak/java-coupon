@@ -3,9 +3,11 @@ import CouponListPage from './pages/CouponListPage'
 import MyCouponsPage from './pages/MyCouponsPage'
 import PaymentPage from './pages/PaymentPage'
 
+const basename = import.meta.env.PROD ? '/coupon' : '/'
+
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <div>
         <nav className="nav">
           <Link to="/">쿠폰 목록</Link>

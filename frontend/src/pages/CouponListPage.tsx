@@ -1,15 +1,10 @@
 import { useState } from 'react'
 import { useMemberCoupons, useIssueCoupon } from '../hooks/useMemberCoupons'
-
-// 임시 쿠폰 목록 데이터 (실제로는 API에서 가져와야 함)
-const MOCK_COUPONS = [
-  { id: 1, title: '신규 가입 쿠폰', discountAmount: 5000, minimumOrderPrice: 10000 },
-  { id: 2, title: '할인 쿠폰', discountAmount: 3000, minimumOrderPrice: 20000 },
-  { id: 3, title: '특가 쿠폰', discountAmount: 10000, minimumOrderPrice: 50000 },
-]
+import { useCoupons } from '../hooks/useCoupons'
 
 function CouponListPage() {
   const [memberId, setMemberId] = useState(1)
+  const { data: coupons = [], isLoading, error } = useCoupons()
   const { data: myCoupons = [], refetch } = useMemberCoupons(memberId)
   const issueMutation = useIssueCoupon()
   const [message, setMessage] = useState<string>('')
@@ -28,6 +23,19 @@ function CouponListPage() {
 
   const isIssued = (couponId: number) => {
     return myCoupons.some((coupon) => coupon.couponId === couponId)
+  }
+
+  const getRemainingQuantity = (coupon: any) => {
+    if (coupon.totalQuantity === null) return '무제한'
+    return (coupon.totalQuantity - coupon.issuedQuantity).toLocaleString()
+  }
+
+  if (isLoading) {
+    return <div className="container"><p>로딩 중...</p></div>
+  }
+
+  if (error) {
+    return <div className="container"><p className="error">쿠폰 목록을 불러오는데 실패했습니다.</p></div>
   }
 
   return (
@@ -50,24 +58,33 @@ function CouponListPage() {
         </div>
       )}
 
-      <div>
-        {MOCK_COUPONS.map((coupon) => {
-          const issued = isIssued(coupon.id)
-          return (
-            <div key={coupon.id} className="card">
-              <h3>{coupon.title}</h3>
-              <p>할인 금액: {coupon.discountAmount.toLocaleString()}원</p>
-              <p>최소 주문 금액: {coupon.minimumOrderPrice.toLocaleString()}원</p>
-              <button
-                onClick={() => handleIssue(coupon.id)}
-                disabled={issued || issueMutation.isPending}
-              >
-                {issued ? '발급 완료' : '발급받기'}
-              </button>
-            </div>
-          )
-        })}
-      </div>
+      {coupons.length === 0 ? (
+        <p>등록된 쿠폰이 없습니다.</p>
+      ) : (
+        <div>
+          {coupons.map((coupon) => {
+            const issued = isIssued(coupon.id!)
+            const remaining = getRemainingQuantity(coupon)
+            return (
+              <div key={coupon.id} className="card">
+                <h3>{coupon.title}</h3>
+                <p>할인 금액: {coupon.discountAmount.toLocaleString()}원</p>
+                <p>최소 주문 금액: {coupon.minimumOrderPrice.toLocaleString()}원</p>
+                <p>잔여 수량: {remaining}</p>
+                <p style={{ fontSize: '0.9em', color: '#666' }}>
+                  유효기간: {new Date(coupon.validStartedAt).toLocaleDateString()} ~ {new Date(coupon.validEndedAt).toLocaleDateString()}
+                </p>
+                <button
+                  onClick={() => handleIssue(coupon.id!)}
+                  disabled={issued || issueMutation.isPending}
+                >
+                  {issued ? '발급 완료' : '발급받기'}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
