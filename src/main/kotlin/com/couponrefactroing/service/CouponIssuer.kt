@@ -28,7 +28,7 @@ class CouponIssuer(
             // 부족한 필드는 기본값으로 설정
             val now = LocalDateTime.now()
             val defaultValidEndAt = now.plusYears(1) // 기본 유효기간: 1년
-            
+
             val coupon = Coupon(
                 title = couponInformation.couponSummery, // couponSummery -> title
                 discountAmount = couponInformation.subtractAmount.toInt(), // subtractAmount -> discountAmount
@@ -37,7 +37,7 @@ class CouponIssuer(
                 validStartedAt = now, // 기본값: 현재 시간부터
                 validEndedAt = defaultValidEndAt // 기본값: 1년 후까지
             )
-            
+
             couponRepository.save(coupon).id ?: throw IllegalStateException("쿠폰 생성 실패")
         }
     }
@@ -67,7 +67,7 @@ class CouponIssuer(
             val memberCoupon = MemberCoupon(
                 memberId = memberId,
                 couponId = couponId,
-                usedAt = null,
+                usedAt = now,
                 createdAt = now,
                 modifiedAt = now
             )
