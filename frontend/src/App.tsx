@@ -3,7 +3,7 @@ import CouponListPage from './pages/CouponListPage'
 import MyCouponsPage from './pages/MyCouponsPage'
 import PaymentPage from './pages/PaymentPage'
 
-const basename = import.meta.env.PROD ? '/coupon' : '/'
+const basename = (import.meta as any).env?.PROD ? '/coupon' : '/'
 
 function App() {
   return (

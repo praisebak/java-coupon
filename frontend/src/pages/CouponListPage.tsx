@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMemberCoupons, useIssueCoupon } from '../hooks/useMemberCoupons'
 import { useCoupons } from '../hooks/useCoupons'
+import { Coupon } from '../types/api'
 
 function CouponListPage() {
   const [memberId, setMemberId] = useState(1)
@@ -25,7 +26,7 @@ function CouponListPage() {
     return myCoupons.some((coupon) => coupon.couponId === couponId)
   }
 
-  const getRemainingQuantity = (coupon: any) => {
+  const getRemainingQuantity = (coupon: Coupon) => {
     if (coupon.totalQuantity === null) return '무제한'
     return (coupon.totalQuantity - coupon.issuedQuantity).toLocaleString()
   }
