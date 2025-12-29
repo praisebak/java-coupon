@@ -29,7 +29,7 @@ class Coupon(
 
     // 전체 발행 가능한 수량 (재고)
     @Column(nullable = true)
-    var totalQuantity: Int? = totalQuantity
+    var totalQuantity: Int = Integer.MAX_VALUE
 
     // 현재까지 발행된 수량
     @Column(nullable = false)
