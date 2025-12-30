@@ -8,7 +8,9 @@ import com.couponrefactroing.dto.CouponAddRequest
 import com.couponrefactroing.repository.CouponRepository
 import com.couponrefactroing.repository.MemberCouponRepository
 import jakarta.annotation.PostConstruct
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.data.redis.core.StringRedisTemplate
@@ -37,9 +39,6 @@ class CouponIssuer(
         println("enabled coupon cached")
     }
 
-    /**
-     * 쿠폰 생성
-     */
     @Transactional
     suspend fun addCoupon(memberId: Long, couponInformation: CouponAddRequest): Long {
         return withContext(Dispatchers.IO) {
@@ -89,6 +88,7 @@ class CouponIssuer(
             if (!canIssue) {
                 throw IllegalStateException("이미 발급받은 쿠폰입니다.")
             }
+            //setIfAbsent 동작안한경우에는 어떻게되는지 추적
 
             try {
                 stockCache.decreaseStock(couponId)
@@ -99,7 +99,12 @@ class CouponIssuer(
 
                 // 5. DB에 재고 차감 반영 (낙관적 락)
                 coupon.decreaseQuantity()
-                couponRepository.save(coupon)
+                val savedCoupon = couponRepository.save(coupon)
+
+                if(savedCoupon.issuedQuantity == savedCoupon.totalQuantity){
+                    throw IllegalStateException("이미 모두 발급된 쿠폰입니다.");
+                }
+
 
                 // 6. MemberCoupon 생성 및 저장
                 val now = LocalDateTime.now()
@@ -120,12 +125,22 @@ class CouponIssuer(
     }
 
     @Scheduled(cron = "0 * * * * *")
-    suspend fun fulfillCoupon(){
+    fun fulfillCouponScheduler(){
         //0 이상인거 가져와서 처리해야함
         //중복은 분산락 걸어서 해결
+
+        CoroutineScope(Dispatchers.IO).launch {
+            fulfillCoupon()
+        }
+    }
+
+    private suspend fun fulfillCoupon() {
         val coupons = couponRepository.findAllByTotalQuantityAfter(0)
-        coupons.forEach { coupon -> coupon.id?.let{
-            couponId -> stockCache.initializeStock(couponId = couponId,coupon.totalQuantity - coupon.issuedQuantity) }
+        coupons.forEach { coupon ->
+            coupon.id?.let { couponId ->
+                println(couponId)
+                stockCache.initializeStock(couponId = couponId, coupon.totalQuantity - coupon.issuedQuantity)
+            }
         }
     }
 }

@@ -23,7 +23,7 @@ class MemberCoupon(
     @Column(name = "coupon_id", nullable = false)
     var couponId: Long? = null,
 
-    @Column(name = "used_at", nullable = false)
+    @Column(name = "used_at")
     var usedAt: LocalDateTime? = null,
 
     @Column(name = "created_at", nullable = false)

@@ -10,7 +10,7 @@ WORKDIR /app
 EXPOSE 8080
 
 # 프로파일은 docker-compose의 environment로 설정됨
-# ENV SPRING_PROFILES_ACTIVE=prod  # docker-compose에서 설정
+ENV SPRING_PROFILES_ACTIVE=prod
 
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
