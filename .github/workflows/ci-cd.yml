@@ -228,10 +228,10 @@ jobs:
             fi
           
             # 4. Docker Compose 실행 (JAR 파일은 볼륨으로 마운트)
-            sudo docker-compose -f docker-compose.prod.yml down || true
-            sudo docker-compose -f docker-compose.prod.yml up -d --build
+            sudo docker-compose -f docker-compose.yml down || true
+            sudo docker-compose -f docker-compose.yml up -d --build
           
             # 5. 정리
             sudo docker image prune -f
-            sudo docker-compose -f docker-compose.prod.yml ps
+            sudo docker-compose -f docker-compose.yml ps
           EOF
