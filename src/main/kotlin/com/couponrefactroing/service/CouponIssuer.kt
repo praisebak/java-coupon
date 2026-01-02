@@ -18,12 +18,16 @@ import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
-import sun.jvm.hotspot.HelloWorld.e
 import java.time.LocalDateTime
 
 /**
- * 쿠폰 발급 로직을 담당하는 컴포넌트
+ * 쿠폰 발급 로직 - Redis 캐시 버전
  * Redis 캐시를 활용한 대용량 트래픽 처리 최적화
+ *
+ * 동시성 제어 전략:
+ * 1. Redis에서 원자적 재고 차감
+ * 2. Redis에서 중복 발급 체크
+ * 3. DB에 발급 내역 저장
  */
 @Component
 @ConditionalOnProperty(value = ["coupon.cache.enable"], havingValue = "true")
@@ -34,15 +38,15 @@ class CouponIssuer(
     private val stockCache: CouponStockCacheService,
     private val duplicateChecker: CouponIssueDuplicateChecker,
     private val redisTemplate: StringRedisTemplate
-) {
+) : CouponIssueService {
 
     @PostConstruct
     fun afterInit(){
-        println("enabled coupon cached")
+        println("✓ CouponIssuer enabled (Redis 캐시 모드)")
     }
 
     @Transactional
-    suspend fun addCoupon(memberId: Long, couponInformation: CouponAddRequest): Long {
+    override suspend fun addCoupon(memberId: Long, couponInformation: CouponAddRequest): Long {
         return withContext(Dispatchers.IO) {
             // 멤버 존재 확인
             memberFrontmen.validateExistMember(memberId)
@@ -63,24 +67,14 @@ class CouponIssuer(
             val couponId = savedCoupon.id ?: throw IllegalStateException("쿠폰 생성 실패")
 
             // Redis에 재고 초기화
-            savedCoupon.totalQuantity?.let {
-                stockCache.initializeStock(couponId, it)
-            }
+            stockCache.initializeStock(couponId, savedCoupon.totalQuantity)
 
             couponId
         }
     }
 
-    /**
-     * 멤버에게 쿠폰 발급 (Redis 캐시 우선 전략)
-     *
-     * 동시성 제어 전략:
-     * 1. Redis에서 원자적 재고 차감
-     * 2. Redis에서 중복 발급 체크
-     * 3. DB에 발급 내역 저장 (비동기 가능)
-     */
     @Transactional
-    suspend fun issueCoupon(couponId: Long, memberId: Long): MemberCoupon {
+    override suspend fun issueCoupon(couponId: Long, memberId: Long): MemberCoupon {
         return withContext(Dispatchers.IO) {
             // 1. 멤버 존재 확인
             memberFrontmen.validateExistMember(memberId)
