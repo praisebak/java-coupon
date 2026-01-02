@@ -15,7 +15,7 @@ class MemberCouponController(
     private val memberCouponService: MemberCouponService
 ) {
 
-    @PostMapping
+    @PostMapping("/")
     suspend fun issueCoupon(@RequestBody request: IssueCouponRequest): Long {
         return couponIssuer.issueCoupon(request.couponId, request.memberId).id
             ?: throw IllegalArgumentException("쿠폰 발급 실패")
