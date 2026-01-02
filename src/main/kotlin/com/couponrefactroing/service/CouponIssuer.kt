@@ -12,11 +12,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.hibernate.dialect.lock.OptimisticEntityLockException
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
+import sun.jvm.hotspot.HelloWorld.e
 import java.time.LocalDateTime
 
 /**
@@ -86,7 +88,7 @@ class CouponIssuer(
             // 2. Redis에서 중복 발급 체크 (원자적)
             val canIssue = duplicateChecker.checkAndMark(couponId, memberId)
             if (!canIssue) {
-                throw IllegalStateException("이미 발급받은 쿠폰입니다.")
+                throw IllegalArgumentException("이미 발급받은 쿠폰입니다.")
             }
             //setIfAbsent 동작안한경우에는 어떻게되는지 추적
 
@@ -105,7 +107,6 @@ class CouponIssuer(
                     throw IllegalStateException("이미 모두 발급된 쿠폰입니다.");
                 }
 
-
                 // 6. MemberCoupon 생성 및 저장
                 val now = LocalDateTime.now()
                 val memberCoupon = MemberCoupon(
@@ -116,14 +117,28 @@ class CouponIssuer(
                     modifiedAt = now
                 )
                 memberCouponRepository.save(memberCoupon)
-            } catch (e: Exception) {
-                // 실패 시 중복 체크 마킹 제거 (보상 트랜잭션)
-                duplicateChecker.clearMark(couponId, memberId)
-                throw e
+            } catch (e: RuntimeException) {
+                duplicateChecker.clearMark(couponId,memberId)
+
+                when (e) {
+                    is OptimisticEntityLockException, is IllegalStateException -> {
+                        throw IllegalArgumentException("유효하지 않은 쿠폰 입니다.");
+                    }
+
+                    else -> throw e
+                }
             }
         }
     }
 
+    //스케줄러를 뭔가 배치처리를해야겠다.
+    //뭔가뭔가 스케줄러를 효율적으로 돌게 해야겠다
+    //30초마다 하고.
+    //DB 부하 VS DB 부하는 적은데 정합성 조금 포기
+        //이렇게 봐주면될듯. 일단은 지금 제 구조에서 저 장애가나는 상황이 레디스가 장애가 난 상황이거든
+        //이 상황자체가 안일어나는게 가용성 좀 더 고려
+        //둘째로 정합성이 안맞춰진다고 했는데, 레디스장애가 나서 30초동안 기능이 잠깐 장애가 생겼다 이렇게 처리하기
+        //VS DB 부하가 퍼지는거
     @Scheduled(cron = "0 * * * * *")
     fun fulfillCouponScheduler(){
         //0 이상인거 가져와서 처리해야함
@@ -138,7 +153,6 @@ class CouponIssuer(
         val coupons = couponRepository.findAllByTotalQuantityAfter(0)
         coupons.forEach { coupon ->
             coupon.id?.let { couponId ->
-                println(couponId)
                 stockCache.initializeStock(couponId = couponId, coupon.totalQuantity - coupon.issuedQuantity)
             }
         }

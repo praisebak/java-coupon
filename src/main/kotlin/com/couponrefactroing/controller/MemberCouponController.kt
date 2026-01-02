@@ -17,8 +17,8 @@ class MemberCouponController(
 
     @PostMapping
     suspend fun issueCoupon(@RequestBody request: IssueCouponRequest): Long {
-        return couponIssuer.issueCoupon(request.couponId, request.memberId).id 
-            ?: throw IllegalStateException("쿠폰 발급 실패")
+        return couponIssuer.issueCoupon(request.couponId, request.memberId).id
+            ?: throw IllegalArgumentException("쿠폰 발급 실패")
     }
 
     @GetMapping("/by-member-id")
@@ -30,15 +30,15 @@ class MemberCouponController(
 
     @PostMapping("/{memberCouponId:^\\d+$}/use")
     suspend fun useCoupon(
-        @PathVariable memberCouponId: Long, 
+        @PathVariable memberCouponId: Long,
         @RequestBody useCouponRequest: UseCouponRequest
     ) {
-        require(memberCouponId == useCouponRequest.memberCouponId) { 
-            "잘못된 쿠폰 번호입니다." 
+        require(memberCouponId == useCouponRequest.memberCouponId) {
+            "잘못된 쿠폰 번호입니다."
         }
-        
+
         memberCouponService.useCoupon(
-            useCouponRequest.memberId, 
+            useCouponRequest.memberId,
             useCouponRequest.memberCouponId
         )
     }

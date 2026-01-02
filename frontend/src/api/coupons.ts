@@ -6,3 +6,4 @@ export const getAllCoupons = async (): Promise<Coupon[]> => {
   return response.data
 }
 
+
