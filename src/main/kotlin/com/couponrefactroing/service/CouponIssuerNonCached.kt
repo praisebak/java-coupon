@@ -18,15 +18,15 @@ import java.time.LocalDateTime
 
 /**
  * 쿠폰 발급 로직 - 순수 DB 버전 (Redis 캐시 미사용)
- * 
+ *
  * 동시성 제어 전략:
  * 1. 낙관적 락 (@Version)으로 재고 차감 동시성 제어
  * 2. DB 유니크 제약조건 (member_coupon_constraint)으로 중복 발급 방지
- * 
+ *
  * 장점:
  * - Redis 의존성 없음 (인프라 단순화)
  * - 데이터 정합성 보장
- * 
+ *
  * 단점:
  * - DB 부하가 높음 (대용량 트래픽 시 성능 저하)
  * - 낙관적 락 충돌 시 재시도 필요
@@ -76,11 +76,11 @@ class CouponIssuerNonCached(
 
     /**
      * 쿠폰 발급 (순수 DB 버전)
-     * 
+     *
      * 동시성 제어:
      * 1. 낙관적 락으로 재고 차감 (coupon.version 증가)
      * 2. DB 유니크 제약조건으로 중복 발급 방지
-     * 
+     *
      * @throws IllegalArgumentException 쿠폰이 없거나, 이미 발급된 경우
      * @throws IllegalStateException 재고 부족, 기간 만료 등
      * @throws ObjectOptimisticLockingFailureException 동시성 충돌 (재시도 필요)
@@ -123,16 +123,15 @@ class CouponIssuerNonCached(
             } catch (e: DataIntegrityViolationException) {
                 // 유니크 제약조건 위반 (중복 발급 시도)
                 val cause = e.cause
-                if (cause is ConstraintViolationException && 
+                if (cause is ConstraintViolationException &&
                     cause.constraintName?.contains("member_coupon_constraint") == true) {
                     throw IllegalArgumentException("이미 발급받은 쿠폰입니다. (동시 요청 감지)")
                 }
                 throw e
-                
+
             } catch (e: ObjectOptimisticLockingFailureException) {
                 // 낙관적 락 충돌 (동시에 여러 요청이 재고 차감 시도)
-                throw IllegalStateException("쿠폰 발급 중 충돌이 발생했습니다. 다시 시도해주세요.", e)
-                
+                throw IllegalStateException("쿠폰 발급 중 충돌이 발생했습니다. 다시 시도해야합니다.", e)
             } catch (e: IllegalStateException) {
                 // 도메인 로직 검증 실패 (재고 부족, 기간 만료 등)
                 throw IllegalArgumentException("유효하지 않은 쿠폰입니다: ${e.message}", e)
