@@ -3,6 +3,7 @@ package com.couponrefactroing.controller
 import com.couponrefactroing.dto.IssueCouponRequest
 import com.couponrefactroing.dto.MemberCouponResponse
 import com.couponrefactroing.dto.UseCouponRequest
+import com.couponrefactroing.service.CouponIssueService
 import com.couponrefactroing.service.CouponIssuer
 import com.couponrefactroing.service.MemberCouponService
 import org.springframework.web.bind.annotation.*
@@ -11,7 +12,7 @@ import kotlinx.coroutines.reactor.mono
 @RestController
 @RequestMapping("/member-coupons")
 class MemberCouponController(
-    private val couponIssuer: CouponIssuer,
+    private val couponIssuer: CouponIssueService,
     private val memberCouponService: MemberCouponService
 ) {
 

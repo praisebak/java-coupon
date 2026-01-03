@@ -13,7 +13,6 @@ import java.time.LocalDateTime
 
 @Service
 class MemberCouponService(
-    private val couponIssuer: CouponIssuer,
     private val memberCouponRepository: MemberCouponRepository,
     private val memberCouponUseHistoryRepository: MemberCouponUseHistoryRepository
 ) {
