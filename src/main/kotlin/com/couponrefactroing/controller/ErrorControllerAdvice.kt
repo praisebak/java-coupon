@@ -8,8 +8,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
 @RestControllerAdvice
 class ErrorControllerAdvice {
 
-    @ExceptionHandler(IllegalArgumentException::class)
-    fun duplicateException(e: IllegalArgumentException): ResponseEntity<String> {
+    @ExceptionHandler(value = [IllegalArgumentException::class, IllegalStateException::class])
+    fun illegalException(e: RuntimeException): ResponseEntity<String> {
         return ResponseEntity
             .status(HttpStatus.BAD_REQUEST)
             .body(e.message)
