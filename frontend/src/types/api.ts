@@ -28,3 +28,12 @@ export interface UseCouponRequest {
   memberCouponId: number
 }
 
+export interface CouponIssueResponse {
+  status: 'SUCCESS' | 'FAILED'
+  correlationId: string
+  data?: {
+    couponId: number
+  }
+  message?: string
+}
+

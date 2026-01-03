@@ -3,6 +3,7 @@ package com.couponrefactroing.service
 import com.couponrefactroing.domain.Coupon
 import com.couponrefactroing.domain.MemberCoupon
 import com.couponrefactroing.dto.CouponAddRequest
+import com.couponrefactroing.dto.CouponIssueState
 import com.couponrefactroing.repository.CouponRepository
 import com.couponrefactroing.repository.MemberCouponRepository
 import jakarta.annotation.PostConstruct
@@ -32,11 +33,6 @@ import java.time.LocalDateTime
  * - 낙관적 락 충돌 시 재시도 필요
  */
 @Component
-@ConditionalOnProperty(
-    value = ["coupon.cache.enable"],
-    havingValue = "false",
-    matchIfMissing = true // 기본값: 캐시 미사용
-)
 class CouponIssuerNonCached(
     private val couponRepository: CouponRepository,
     private val memberCouponRepository: MemberCouponRepository,
@@ -86,7 +82,7 @@ class CouponIssuerNonCached(
      * @throws ObjectOptimisticLockingFailureException 동시성 충돌 (재시도 필요)
      */
     @Transactional
-    override suspend fun issueCoupon(couponId: Long, memberId: Long): MemberCoupon {
+    override suspend fun issueCoupon(couponId: Long, memberId: Long): String {
         return withContext(Dispatchers.IO) {
             try {
                 // 1. 멤버 존재 확인
@@ -118,8 +114,9 @@ class CouponIssuerNonCached(
                 )
 
                 // DB 유니크 제약조건으로 중복 발급 방지
-                memberCouponRepository.save(memberCoupon)
+                val savedMemberCoupon = memberCouponRepository.save(memberCoupon)
 
+                savedMemberCoupon.id.toString()
             } catch (e: DataIntegrityViolationException) {
                 // 유니크 제약조건 위반 (중복 발급 시도)
                 val cause = e.cause

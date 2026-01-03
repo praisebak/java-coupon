@@ -1,6 +1,38 @@
 version: '3.8'
 
 services:
+  mysqld-exporter:
+    container_name: coupon-mysql-exporter
+    image: prom/mysqld-exporter
+    ports:
+      - "9104:9104"
+    depends_on:
+      - mysql # docker-compose상의 mysql 서비스 이름
+    networks:
+      - coupon-network
+    volumes:
+      - ./.my.cnf:/etc/mysqld_exporter/.my.cnf
+    command:
+      - '--config.my-cnf=/etc/mysqld_exporter/.my.cnf'
+      - '--collect.global_status'
+      - '--collect.info_schema.innodb_metrics'
+
+  redis-exporter:
+    container_name: coupon-redis-exporter
+    image: oliver006/redis_exporter:latest
+    environment:
+      # [중요] docker network 내부의 Redis 주소를 적습니다.
+      # host 포트(6380)가 아니라 내부 포트(6379)를 써야 합니다.
+      - REDIS_ADDR=redis://coupon-redis:6379
+      # 만약 Redis에 비밀번호가 있다면 아래 주석을 풀고 설정하세요
+      # - REDIS_PASSWORD=password
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis # 서비스명(coupon-redis가 아니라 yml상의 서비스 키 이름)
+    networks:
+      - coupon-network # 사용중인 네트워크 이름으로 변경하세요
+
   backend:
     build:
       context: .
@@ -12,12 +44,15 @@ services:
       - SPRING_PROFILES_ACTIVE=prod
       - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/coupon_db
       - SPRING_DATASOURCE_USERNAME=user
-      - SPRING_DATASOURCE_PASSWORD=password
-      - SPRING_DATA_REDIS_HOST=redis
-      - SPRING_DATA_REDIS_PORT=6380
+      - SPRING_DATASOURCE_PASSWORD=qkrcksdid1@
+      - SPRING_DATA_REDIS_HOST=coupon-redis
+      - SPRING_DATA_REDIS_PORT=6379
+      - COUPON_CACHE_ENABLE=true
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092
     depends_on:
       - mysql
       - redis
+      - kafka
     restart: unless-stopped
     networks:
       - coupon-network
@@ -30,10 +65,10 @@ services:
     env_file:
       - .env
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      MYSQL_ROOT_PASSWORD: qkrcksdid1@
       MYSQL_DATABASE: ${DB_NAME:-coupon_db}
       MYSQL_USER: user
-      MYSQL_PASSWORD: password
+      MYSQL_PASSWORD: qkrcksdid1@
     volumes:
       - mysql_data:/var/lib/mysql
     ports:
@@ -53,7 +88,7 @@ services:
     restart: unless-stopped
     networks:
       - coupon-network
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --protected-mode no
 
   prometheus:
     image: prom/prometheus:latest
@@ -88,6 +123,56 @@ services:
       - coupon-network
     depends_on:
       - prometheus
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: coupon-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "22181:2181"
+    networks:
+      - coupon-network
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: coupon-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft 설정 (Zookeeper 없이 동작)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      # 리스너 설정 (Controller용 포트 29093 추가됨)
+      KAFKA_LISTENERS: PLAINTEXT://:29092,PLAINTEXT_HOST://:9092,CONTROLLER://:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # 클러스터 ID (임의의 Base64 문자열, 고정값 사용)
+      KAFKA_CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    networks:
+      - coupon-network
+
+  # [선택] Kafka 관리용 웹 UI (http://localhost:8090)
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: coupon-kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - coupon-network
 
 networks:
   coupon-network:

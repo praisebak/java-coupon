@@ -5,20 +5,28 @@ import com.couponrefactroing.cache.CouponStockCacheService
 import com.couponrefactroing.domain.Coupon
 import com.couponrefactroing.domain.MemberCoupon
 import com.couponrefactroing.dto.CouponAddRequest
+import com.couponrefactroing.dto.IssueCouponEvent
 import com.couponrefactroing.repository.CouponRepository
 import com.couponrefactroing.repository.MemberCouponRepository
 import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.reactive.awaitFirst
 import kotlinx.coroutines.withContext
 import org.hibernate.dialect.lock.OptimisticEntityLockException
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
-import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.ReactiveRedisTemplate
+import org.springframework.data.redis.listener.ChannelTopic
+import org.springframework.kafka.annotation.KafkaListener
+import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
+import java.time.Duration
 import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
+import java.util.UUID
 
 /**
  * 쿠폰 발급 로직 - Redis 캐시 버전
@@ -30,14 +38,14 @@ import java.time.LocalDateTime
  * 3. DB에 발급 내역 저장
  */
 @Component
-@ConditionalOnProperty(value = ["coupon.cache.enable"], havingValue = "true")
 class CouponIssuer(
     private val couponRepository: CouponRepository,
     private val memberCouponRepository: MemberCouponRepository,
     private val memberFrontmen: MemberFrontMen,
     private val stockCache: CouponStockCacheService,
     private val duplicateChecker: CouponIssueDuplicateChecker,
-    private val redisTemplate: StringRedisTemplate
+    private val reactiveRedisTemplate: ReactiveRedisTemplate<String, String>,
+    private val kafkaTemplate: KafkaTemplate<String, IssueCouponEvent>
 ) : CouponIssueService {
 
     @PostConstruct
@@ -48,7 +56,6 @@ class CouponIssuer(
     @Transactional
     override suspend fun addCoupon(memberId: Long, couponInformation: CouponAddRequest): Long {
         return withContext(Dispatchers.IO) {
-            // 멤버 존재 확인
             memberFrontmen.validateExistMember(memberId)
 
             val now = LocalDateTime.now()
@@ -73,18 +80,30 @@ class CouponIssuer(
         }
     }
 
+    //issue coupon 이벤트 발급 -> 다른 인스턴스들이 받아서 처리함 -> 완료 처리
+    override suspend fun issueCoupon(couponId: Long, memberId: Long): String {
+        val correlationId = UUID.randomUUID().toString()
+        val event = IssueCouponEvent(memberId,couponId,correlationId)
+
+        kafkaTemplate.send("issue-coupon",event)
+
+        return correlationId
+    }
+
+    @KafkaListener(topicPattern = "issue-coupon")
     @Transactional
-    override suspend fun issueCoupon(couponId: Long, memberId: Long): MemberCoupon {
-        return withContext(Dispatchers.IO) {
-            // 1. 멤버 존재 확인
+    suspend fun issueCoupon(issueCouponEvent : IssueCouponEvent){
+        withContext(Dispatchers.IO) {
+            val memberId = issueCouponEvent.memberId
+            val couponId = issueCouponEvent.couponId
+            val eventId = issueCouponEvent.eventId
+
             memberFrontmen.validateExistMember(memberId)
 
-            // 2. Redis에서 중복 발급 체크 (원자적)
             val canIssue = duplicateChecker.checkAndMark(couponId, memberId)
             if (!canIssue) {
                 throw IllegalArgumentException("이미 발급받은 쿠폰입니다.")
             }
-            //setIfAbsent 동작안한경우에는 어떻게되는지 추적
 
             try {
                 stockCache.decreaseStock(couponId)
@@ -97,11 +116,10 @@ class CouponIssuer(
                 coupon.decreaseQuantity()
                 val savedCoupon = couponRepository.save(coupon)
 
-                if(savedCoupon.issuedQuantity == savedCoupon.totalQuantity){
+                if (savedCoupon.issuedQuantity == savedCoupon.totalQuantity) {
                     throw IllegalStateException("이미 모두 발급된 쿠폰입니다.");
                 }
 
-                // 6. MemberCoupon 생성 및 저장
                 val now = LocalDateTime.now()
                 val memberCoupon = MemberCoupon(
                     memberId = memberId,
@@ -111,8 +129,10 @@ class CouponIssuer(
                     modifiedAt = now
                 )
                 memberCouponRepository.save(memberCoupon)
+
+                sendCouponSuccessToRedis(eventId, savedCoupon.id)
             } catch (e: RuntimeException) {
-                duplicateChecker.clearMark(couponId,memberId)
+                duplicateChecker.clearMark(couponId, memberId)
 
                 when (e) {
                     is OptimisticEntityLockException, is IllegalStateException -> {
@@ -125,30 +145,43 @@ class CouponIssuer(
         }
     }
 
-    //스케줄러를 뭔가 배치처리를해야겠다.
-    //뭔가뭔가 스케줄러를 효율적으로 돌게 해야겠다
-    //30초마다 하고.
-    //DB 부하 VS DB 부하는 적은데 정합성 조금 포기
-        //이렇게 봐주면될듯. 일단은 지금 제 구조에서 저 장애가나는 상황이 레디스가 장애가 난 상황이거든
-        //이 상황자체가 안일어나는게 가용성 좀 더 고려
-        //둘째로 정합성이 안맞춰진다고 했는데, 레디스장애가 나서 30초동안 기능이 잠깐 장애가 생겼다 이렇게 처리하기
-        //VS DB 부하가 퍼지는거
     @Scheduled(cron = "0 * * * * *")
     fun fulfillCouponScheduler(){
-        //0 이상인거 가져와서 처리해야함
-        //중복은 분산락 걸어서 해결
-
         CoroutineScope(Dispatchers.IO).launch {
             fulfillCoupon()
         }
     }
 
-    private suspend fun fulfillCoupon() {
+    suspend fun fulfillCoupon() {
         val coupons = couponRepository.findAllByTotalQuantityAfter(0)
         coupons.forEach { coupon ->
             coupon.id?.let { couponId ->
                 stockCache.initializeStock(couponId = couponId, coupon.totalQuantity - coupon.issuedQuantity)
             }
         }
+    }
+
+    private fun sendCouponSuccessToRedis(eventId: String, savedCouponId: Long?) {
+        val successJson = """
+                {
+                    "correlationId": "$eventId",
+                    "status": "SUCCESS",
+                    "data": { "couponId": ${savedCouponId} }
+                }
+            """.trimIndent()
+
+        // Redis로 발사! -> Waiter가 받음
+        reactiveRedisTemplate.convertAndSend("coupon-completion-topic", successJson).subscribe()
+
+    }
+
+    suspend fun waitUntilSseResponse(correlationId: String): String? {
+        val topic = ChannelTopic("coupon-completion-topic")
+
+        return reactiveRedisTemplate.listenTo(topic)
+            .map { it.message }
+            .filter { it.contains(correlationId) }
+            .timeout(Duration.of(30, ChronoUnit.SECONDS))
+            .awaitFirst()
     }
 }
