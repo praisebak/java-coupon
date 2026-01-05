@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-import { MemberCoupon, IssueCouponRequest, UseCouponRequest } from '../types/api'
+import { MemberCoupon, UseCouponRequest } from '../types/api'
 
 export const getMemberCoupons = async (memberId: number): Promise<MemberCoupon[]> => {
   const response = await apiClient.get<MemberCoupon[]>('/member-coupons/by-member-id', {
@@ -10,22 +10,22 @@ export const getMemberCoupons = async (memberId: number): Promise<MemberCoupon[]
 
 /**
  * SSE 기반 비동기 쿠폰 발급
- * 
+ *
  * POST /stream/issue로 SSE 스트림 열기
  * - STATUS 이벤트: 접수 완료 알림
  * - RESULT 이벤트: 최종 결과 (성공/실패)
  * - ERROR 이벤트: 타임아웃 또는 오류
  */
 export const issueCoupon = async (
-  couponId: number, 
+  couponId: number,
   memberId: number
 ): Promise<number> => {
   return new Promise(async (resolve, reject) => {
     const baseURL = (import.meta as any).env?.PROD ? 'api' : '/api'
     const url = `${baseURL}/member-coupons/stream/issue`
-    
+
     console.log('🚀 쿠폰 발급 요청 시작:', { url, couponId, memberId })
-    
+
     try {
       // fetch로 SSE 스트림 열기 (POST + text/event-stream)
       const response = await fetch(url, {
@@ -70,7 +70,7 @@ export const issueCoupon = async (
 
       while (true) {
         const { done, value } = await reader.read()
-        
+
         if (done) {
           console.log('✅ 스트림 종료')
           clearTimeout(timeout)
@@ -80,14 +80,14 @@ export const issueCoupon = async (
         chunkCount++
         const chunk = decoder.decode(value, { stream: true })
         console.log(`📦 청크 ${chunkCount}:`, chunk)
-        
+
         buffer += chunk
         const lines = buffer.split('\n\n')
         buffer = lines.pop() || ''
 
         for (const line of lines) {
           console.log('📄 라인:', line)
-          
+
           const eventMatch = line.match(/event:\s*(\w+)/)
           const dataMatch = line.match(/data:\s*(.+)/)
 
@@ -98,7 +98,7 @@ export const issueCoupon = async (
 
           const eventType = eventMatch[1]
           const data = dataMatch[1]
-          
+
           console.log(`🎯 이벤트 수신: ${eventType}`, data)
 
           // STATUS 이벤트: 접수 완료
@@ -112,7 +112,7 @@ export const issueCoupon = async (
             clearTimeout(timeout)
             try {
               const result = JSON.parse(data)
-              
+
               if (result.status === 'SUCCESS') {
                 const memberCouponId = result.data?.couponId
                 console.log('🎉 발급 성공:', memberCouponId)
