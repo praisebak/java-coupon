@@ -20,34 +20,43 @@ class MemberCouponController(
 
     @PostMapping("/stream/issue", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun issueCouponSse(@RequestBody request: IssueCouponRequest): Flow<ServerSentEvent<String>> = flow {
+        println("🚀 [Controller] SSE 요청 수신: couponId=${request.couponId}, memberId=${request.memberId}")
 
-        // 1. [요청] 서비스에게 일 시키고 '접수 번호(ID)'를 받습니다.
-        // (이때 서비스는 Kafka에 메시지만 던지고 바로 리턴합니다.)
+        // 1. 쿠폰 발급 시작
         val correlationId = couponIssuer.issueCoupon(request.couponId, request.memberId)
+        println("📋 [Controller] correlationId 생성: $correlationId")
 
-        // 2. [1차 응답] 사용자에게 "일단 접수됐다"고 즉시 알려줍니다.
-        emit(ServerSentEvent.builder<String>()
+        // 2. STATUS 이벤트 전송
+        val statusEvent = ServerSentEvent.builder<String>()
             .event("STATUS")
             .data("접수 완료 ($correlationId). 처리 중입니다...")
-            .build())
+            .build()
+        println("📤 [Controller] STATUS emit: ${statusEvent.data()}")
+        emit(statusEvent)
 
-        // 3. [대기] 결과가 나올 때까지 여기서 잠시 멈춥니다. (Suspend)
-        // resultWaiter가 Redis를 감시하다가, 결과가 뜨면 낚아채서 가져옵니다.
+        // 3. 결과 대기
+        println("⏳ [Controller] 결과 대기 시작...")
         try {
             val resultJson = couponIssuer.waitUntilSseResponse(correlationId)
+            println("✅ [Controller] 결과 수신: $resultJson")
 
-            // 4. [2차 응답] 결과를 받으면 사용자에게 최종 발송합니다.
-            emit(ServerSentEvent.builder<String>()
+            // 4. RESULT 이벤트 전송
+            val resultEvent = ServerSentEvent.builder<String>()
                 .event("RESULT")
                 .data(resultJson)
-                .build())
+                .build()
+            println("📤 [Controller] RESULT emit: ${resultEvent.data()}")
+            emit(resultEvent)
 
         } catch (e: Exception) {
+            println("❌ [Controller] 에러 발생: ${e.message}")
             emit(ServerSentEvent.builder<String>()
                 .event("ERROR")
-                .data("시간 초과 또는 오류 발생")
+                .data("시간 초과 또는 오류 발생: ${e.message}")
                 .build())
         }
+        
+        println("✅ [Controller] SSE 스트림 종료")
     }
 
     @GetMapping("/by-member-id")
