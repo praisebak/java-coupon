@@ -14,8 +14,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactive.awaitFirst
 import kotlinx.coroutines.withContext
-import org.hibernate.dialect.lock.OptimisticEntityLockException
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.data.redis.listener.ChannelTopic
 import org.springframework.kafka.annotation.KafkaListener
@@ -24,13 +22,11 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
-import java.time.ZoneOffset
-import java.time.chrono.ChronoLocalDate
 import java.time.temporal.ChronoUnit
-import java.time.temporal.TemporalAccessor
 import java.util.UUID
 
 /**
@@ -105,39 +101,13 @@ class CouponIssuer(
             val couponId = issueCouponEvent.couponId
             val eventId = issueCouponEvent.eventId
 
-            memberFrontmen.validateExistMember(memberId)
-
-            val canIssue = duplicateChecker.checkAndMark(couponId, memberId)
-            if (!canIssue) {
-                throw IllegalArgumentException("이미 발급받은 쿠폰입니다.")
-            }
-
             try {
+                memberFrontmen.validateExistMember(memberId)
+                validateAlreadyAssignedCoupon(couponId, memberId)
                 stockCache.decreaseStock(couponId)
-
-                // 4. 쿠폰 조회 (유효성 검증용)
-                val coupon = couponRepository.findById(couponId)
-                    .orElseThrow { IllegalArgumentException("쿠폰을 찾을 수 없습니다. couponId: $couponId") }
-
-                // 5. DB에 재고 차감 반영 (낙관적 락)
-                coupon.decreaseQuantity()
-                val savedCoupon = couponRepository.save(coupon)
-
-                if (savedCoupon.issuedQuantity == savedCoupon.totalQuantity) {
-                    throw IllegalStateException("이미 모두 발급된 쿠폰입니다.");
-                }
-
-                val now = LocalDateTime.now()
-                val memberCoupon = MemberCoupon(
-                    memberId = memberId,
-                    couponId = couponId,
-                    usedAt = null, // 발급 시에는 사용 전 상태
-                    createdAt = now,
-                    modifiedAt = now
-                )
-                memberCouponRepository.save(memberCoupon)
-
-                sendCouponSuccessToRedis(eventId, savedCoupon.id)
+                decreaseStock(couponId)
+                saveMemberCoupon(memberId, couponId)
+                sendCouponSuccessToRedis(eventId, couponId)
 
                 val end = Instant.now()
                 val duration = Duration.between(start, end)
@@ -145,7 +115,7 @@ class CouponIssuer(
 
             } catch (e: RuntimeException) {
                 duplicateChecker.clearMark(couponId, memberId)
-
+                sendCouponFailureToRedis(eventId,couponId)
                 when (e) {
                     is ObjectOptimisticLockingFailureException, is IllegalStateException -> {
                         throw IllegalArgumentException("유효하지 않은 쿠폰 입니다." + e.message);
@@ -154,6 +124,33 @@ class CouponIssuer(
                     else -> throw e
                 }
             }
+        }
+    }
+
+    private fun saveMemberCoupon(memberId: Long, couponId: Long) {
+        val now = LocalDateTime.now()
+        val memberCoupon = MemberCoupon(
+            memberId = memberId,
+            couponId = couponId,
+            usedAt = null,
+            createdAt = now,
+            modifiedAt = now
+        )
+        memberCouponRepository.save(memberCoupon)
+    }
+
+    private fun decreaseStock(couponId: Long) {
+        val updatedRows = couponRepository.increaseIssuedQuantity(couponId)
+
+        if (updatedRows != 1) {
+            throw IllegalStateException("이미 모두 발급된 쿠폰입니다.");
+        }
+    }
+
+    private suspend fun validateAlreadyAssignedCoupon(couponId: Long, memberId: Long) {
+        val canIssue = duplicateChecker.checkAndMark(couponId, memberId)
+        if (!canIssue) {
+            throw IllegalArgumentException("이미 발급받은 쿠폰입니다.")
         }
     }
 
@@ -177,14 +174,27 @@ class CouponIssuer(
         val successJson = """
                 {
                     "correlationId": "$eventId",
-                    "status": "SUCCESS",
+                    "status": "RESULT",
                     "data": { "couponId": ${savedCouponId} }
                 }
             """.trimIndent()
 
         // Redis로 발사! -> Waiter가 받음
         reactiveRedisTemplate.convertAndSend("coupon-completion-topic", successJson).subscribe()
+    }
 
+    private fun sendCouponFailureToRedis(eventId: String, couponId: Long) {
+        // JSON 깨짐 방지를 위해 따옴표(")는 작은따옴표(')로 치환하거나 이스케이프 처리
+        val failJson = """
+        {
+            "correlationId": "$eventId",
+            "status": "RESULT",
+            "message": "실패하는 쿠폰 id $couponId"
+        }
+    """.trimIndent()
+
+        // Redis로 발사!
+        reactiveRedisTemplate.convertAndSend("coupon-completion-topic", failJson).subscribe()
     }
 
     suspend fun waitUntilSseResponse(correlationId: String): String? {
