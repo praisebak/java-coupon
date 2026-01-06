@@ -20,6 +20,7 @@ import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.data.redis.listener.ChannelTopic
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.kafka.core.KafkaTemplate
+import org.springframework.orm.ObjectOptimisticLockingFailureException
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
@@ -146,8 +147,8 @@ class CouponIssuer(
                 duplicateChecker.clearMark(couponId, memberId)
 
                 when (e) {
-                    is OptimisticEntityLockException, is IllegalStateException -> {
-                        throw IllegalArgumentException("유효하지 않은 쿠폰 입니다.");
+                    is ObjectOptimisticLockingFailureException, is IllegalStateException -> {
+                        throw IllegalArgumentException("유효하지 않은 쿠폰 입니다." + e.message);
                     }
 
                     else -> throw e
