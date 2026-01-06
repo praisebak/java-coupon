@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactive.awaitFirst
+import kotlinx.coroutines.reactive.awaitSingle
 import kotlinx.coroutines.withContext
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.data.redis.listener.ChannelTopic
@@ -24,6 +25,7 @@ import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event
+import reactor.core.publisher.Flux
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
@@ -200,13 +202,13 @@ class CouponIssuer(
         reactiveRedisTemplate.convertAndSend("coupon-completion-topic", failJson).subscribe()
     }
 
-    suspend fun waitUntilSseResponse(correlationId: String): String? {
+    suspend fun waitUntilSseResponse(correlationId: String): String {
         val topic = ChannelTopic("coupon-completion-topic")
 
         return reactiveRedisTemplate.listenTo(topic)
             .map { it.message }
             .filter { it.contains(correlationId) }
             .timeout(Duration.of(30, ChronoUnit.SECONDS))
-            .awaitFirst()
+            .awaitSingle()
     }
 }
