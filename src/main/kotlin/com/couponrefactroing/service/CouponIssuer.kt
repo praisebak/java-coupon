@@ -22,6 +22,7 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event
 import java.time.Duration
 import java.time.Instant
@@ -46,7 +47,8 @@ class CouponIssuer(
     private val stockCache: CouponStockCacheService,
     private val duplicateChecker: CouponIssueDuplicateChecker,
     private val reactiveRedisTemplate: ReactiveRedisTemplate<String, String>,
-    private val kafkaTemplate: KafkaTemplate<String, IssueCouponEvent>
+    private val kafkaTemplate: KafkaTemplate<String, IssueCouponEvent>,
+    private val transactionTemplate: TransactionTemplate
 ) : CouponIssueService {
 
     @PostConstruct
@@ -92,7 +94,6 @@ class CouponIssuer(
     }
 
     @KafkaListener(topicPattern = "issue-coupon")
-    @Transactional
     suspend fun issueCoupon(issueCouponEvent : IssueCouponEvent){
         withContext(Dispatchers.IO) {
             val start = Instant.now()
@@ -105,8 +106,10 @@ class CouponIssuer(
                 memberFrontmen.validateExistMember(memberId)
                 validateAlreadyAssignedCoupon(couponId, memberId)
                 stockCache.decreaseStock(couponId)
-                decreaseStock(couponId)
-                saveMemberCoupon(memberId, couponId)
+                transactionTemplate.execute { status ->
+                    decreaseStock(couponId)
+                    saveMemberCoupon(memberId, couponId)
+                }
                 sendCouponSuccessToRedis(eventId, couponId)
 
                 val end = Instant.now()

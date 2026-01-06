@@ -22,6 +22,7 @@ class MemberCouponService(
         }
     }
 
+    //형식상 붙인것
     @Transactional
     suspend fun addMemberCoupon(memberCouponId: Long, memberId: Long) {
         withContext(Dispatchers.IO) {
@@ -50,6 +51,7 @@ class MemberCouponService(
         }
     }
 
+    //형식상 붙인것
     @Transactional
     suspend fun useCoupon(memberId: Long, memberCouponId: Long) {
         withContext(Dispatchers.IO) {
