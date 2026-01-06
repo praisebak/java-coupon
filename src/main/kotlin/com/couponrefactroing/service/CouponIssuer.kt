@@ -24,8 +24,12 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
 import java.time.Duration
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.ZoneOffset
+import java.time.chrono.ChronoLocalDate
 import java.time.temporal.ChronoUnit
+import java.time.temporal.TemporalAccessor
 import java.util.UUID
 
 /**
@@ -94,6 +98,8 @@ class CouponIssuer(
     @Transactional
     suspend fun issueCoupon(issueCouponEvent : IssueCouponEvent){
         withContext(Dispatchers.IO) {
+            val start = Instant.now()
+
             val memberId = issueCouponEvent.memberId
             val couponId = issueCouponEvent.couponId
             val eventId = issueCouponEvent.eventId
@@ -131,6 +137,11 @@ class CouponIssuer(
                 memberCouponRepository.save(memberCoupon)
 
                 sendCouponSuccessToRedis(eventId, savedCoupon.id)
+
+                val end = Instant.now()
+                val duration = Duration.between(start, end)
+                println("소요된 시간 = $duration")
+
             } catch (e: RuntimeException) {
                 duplicateChecker.clearMark(couponId, memberId)
 

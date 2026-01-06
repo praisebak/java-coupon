@@ -7,56 +7,76 @@ import com.couponrefactroing.service.CouponIssuer
 import com.couponrefactroing.service.MemberCouponService
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import org.slf4j.Logger
 import org.springframework.web.bind.annotation.*
 import org.springframework.http.MediaType
 import org.springframework.http.codec.ServerSentEvent
+import kotlin.jvm.java
+import org.slf4j.LoggerFactory
 
 @RestController
 @RequestMapping("/member-coupons")
 class MemberCouponController(
     private val memberCouponService: MemberCouponService,
-    private val couponIssuer: CouponIssuer
+    private val couponIssuer: CouponIssuer,
 ) {
+    private val log: Logger = LoggerFactory.getLogger(MemberCouponController::class.java)
 
     @PostMapping("/stream/issue", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun issueCouponSse(@RequestBody request: IssueCouponRequest): Flow<ServerSentEvent<String>> = flow {
-        println("🚀 [Controller] SSE 요청 수신: couponId=${request.couponId}, memberId=${request.memberId}")
+        // [타이머 시작]
+        val startTime = System.currentTimeMillis()
+        val memberId = request.memberId
 
-        // 1. 쿠폰 발급 시작
+        // 0. 진입 로그
+        log.info("[SSE Start] Member: $memberId - 요청 시작")
+
+        // 1. 쿠폰 발급 요청 (Kafka Produce)
         val correlationId = couponIssuer.issueCoupon(request.couponId, request.memberId)
-        println("📋 [Controller] correlationId 생성: $correlationId")
+
+        val step1Time = System.currentTimeMillis()
+        log.info("[Step 1] Member: $memberId ($correlationId) - Kafka 발급 요청 완료 (소요: ${step1Time - startTime}ms)")
 
         // 2. STATUS 이벤트 전송
         val statusEvent = ServerSentEvent.builder<String>()
             .event("STATUS")
             .data("접수 완료 ($correlationId). 처리 중입니다...")
             .build()
-        println("📤 [Controller] STATUS emit: ${statusEvent.data()}")
         emit(statusEvent)
 
-        // 3. 결과 대기
-        println("⏳ [Controller] 결과 대기 시작...")
+        val step2Time = System.currentTimeMillis()
+        log.info("[Step 2] Member: $memberId ($correlationId) - STATUS 이벤트 전송 완료 (누적: ${step2Time - startTime}ms)")
+
+        // 3. 결과 대기 (여기가 가장 오래 걸리는 구간 - Redis Polling/Sub)
         try {
+            // 대기 시작 시간 기록
+            val waitStart = System.currentTimeMillis()
+
             val resultJson = couponIssuer.waitUntilSseResponse(correlationId)
-            println("✅ [Controller] 결과 수신: $resultJson")
+
+            val waitEnd = System.currentTimeMillis()
+            // [중요] 대기 시간(Latency)만 따로 계산
+            log.info("[Step 3] Member: $memberId ($correlationId) - 결과 수신 완료 (대기 시간: ${waitEnd - waitStart}ms / 전체 누적: ${waitEnd - startTime}ms)")
 
             // 4. RESULT 이벤트 전송
             val resultEvent = ServerSentEvent.builder<String>()
                 .event("RESULT")
                 .data(resultJson)
                 .build()
-            println("📤 [Controller] RESULT emit: ${resultEvent.data()}")
             emit(resultEvent)
 
+            val step4Time = System.currentTimeMillis()
+            log.info("[Step 4] Member: $memberId ($correlationId) - RESULT 전송 및 종료 (총 소요: ${step4Time - startTime}ms)")
+
         } catch (e: Exception) {
-            println("❌ [Controller] 에러 발생: ${e.message}")
+            val errorTime = System.currentTimeMillis()
+            log.error("[Error] Member: $memberId ($correlationId) - 실패 (총 소요: ${errorTime - startTime}ms) / 원인: ${e.message}")
+
             emit(ServerSentEvent.builder<String>()
                 .event("ERROR")
                 .data("시간 초과 또는 오류 발생: ${e.message}")
                 .build())
         }
-        
-        println("✅ [Controller] SSE 스트림 종료")
     }
 
     @GetMapping("/by-member-id")
