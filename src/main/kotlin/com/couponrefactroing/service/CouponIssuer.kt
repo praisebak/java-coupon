@@ -121,10 +121,10 @@ class CouponIssuer(
                 sendCouponFailureToRedis(eventId,couponId)
                 when (e) {
                     is ObjectOptimisticLockingFailureException, is IllegalStateException -> {
-                        throw IllegalArgumentException("유효하지 않은 쿠폰 입니다." + e.message);
+//                        throw IllegalArgumentException("유효하지 않은 쿠폰 입니다." + e.message);
                     }
-
-                    else -> throw e
+                    //TODO 다시 기록해야함
+//                    else -> throw e
                 }
             }
         }
