@@ -15,6 +15,8 @@ import org.springframework.http.MediaType
 import org.springframework.http.codec.ServerSentEvent
 import kotlin.jvm.java
 import org.slf4j.LoggerFactory
+import java.util.UUID
+import java.util.concurrent.TimeoutException
 
 @RestController
 @RequestMapping("/member-coupons")
@@ -32,15 +34,20 @@ class MemberCouponController(
 
         coroutineScope {
 
-            // 0. 진입 로그
             log.info("[SSE Start] Member: $memberId - 요청 시작")
 
-            // 1. 쿠폰 발급 요청 (Kafka Produce)
-            val correlationId = couponIssuer.issueCoupon(request.couponId, request.memberId)
+            val correlationId = UUID.randomUUID().toString()
 
             val resultDeferred = async {
-                couponIssuer.waitUntilSseResponse(correlationId)
+                try {
+                    couponIssuer.waitUntilSseResponse(correlationId)
+                } catch (e: TimeoutException) {
+                    couponIssuer.checkSseResponse(correlationId)
+                }
+                return@async "성공"
             }
+
+            couponIssuer.issueCoupon(request.couponId, request.memberId,correlationId)
 
             val step1Time = System.currentTimeMillis()
             log.info("[Step 1] Member: $memberId ($correlationId) - Kafka 발급 요청 완료 (소요: ${step1Time - startTime}ms)")

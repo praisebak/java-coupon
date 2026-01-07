@@ -18,6 +18,6 @@ interface CouponIssueService {
     /**
      * 쿠폰 발급
      */
-    suspend fun issueCoupon(couponId: Long, memberId: Long): String
+    suspend fun issueCoupon(couponId: Long, memberId: Long, eventId : String): String
 }
 

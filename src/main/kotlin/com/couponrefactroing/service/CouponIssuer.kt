@@ -12,7 +12,6 @@ import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.reactive.awaitFirst
 import kotlinx.coroutines.reactive.awaitSingle
 import kotlinx.coroutines.withContext
 import org.springframework.data.redis.core.ReactiveRedisTemplate
@@ -24,8 +23,6 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event
-import reactor.core.publisher.Flux
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
@@ -86,8 +83,7 @@ class CouponIssuer(
     }
 
     //issue coupon 이벤트 발급 -> 다른 인스턴스들이 받아서 처리함 -> 완료 처리
-    override suspend fun issueCoupon(couponId: Long, memberId: Long): String {
-        val correlationId = UUID.randomUUID().toString()
+    override suspend fun issueCoupon(couponId: Long, memberId: Long, correlationId : String): String {
         val event = IssueCouponEvent(memberId,couponId,correlationId)
 
         kafkaTemplate.send("issue-coupon",event)
@@ -208,7 +204,12 @@ class CouponIssuer(
         return reactiveRedisTemplate.listenTo(topic)
             .map { it.message }
             .filter { it.contains(correlationId) }
-            .timeout(Duration.of(30, ChronoUnit.SECONDS))
+            .next()
+            .timeout(Duration.of(3, ChronoUnit.SECONDS))
             .awaitSingle()
+    }
+
+    suspend fun checkSseResponse(correlationId: String): Boolean{
+        return reactiveRedisTemplate.opsForValue().get(correlationId).awaitSingle() != null
     }
 }
