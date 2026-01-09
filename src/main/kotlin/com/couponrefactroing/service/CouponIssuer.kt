@@ -107,13 +107,14 @@ class CouponIssuer(
             val eventId = issueCouponEvent.eventId
 
             try {
-                memberFrontmen.validateExistMember(memberId)
-                validateAlreadyAssignedCoupon(couponId, memberId)
+//                memberFrontmen.validateExistMember(memberId)
+//                validateAlreadyAssignedCoupon(couponId, memberId)
                 stockCache.decreaseStock(couponId)
                 transactionTemplate.execute { status ->
                     decreaseStock(couponId)
                     saveMemberCoupon(memberId, couponId)
                 }
+
                 sendCouponSuccessToRedis(eventId, couponId)
 
                 val end = Instant.now()
@@ -186,7 +187,7 @@ class CouponIssuer(
                 }
             """.trimIndent()
 
-        reactiveRedisTemplate.convertAndSend("coupon-completion-topic", successJson).awaitSingle()
+        reactiveRedisTemplate.convertAndSend("coupon-completion-topic", successJson).subscribe()
     }
 
     private suspend fun sendCouponFailureToRedis(eventId: String, couponId: Long) {
@@ -200,7 +201,7 @@ class CouponIssuer(
     """.trimIndent()
 
         // Redis로 발사!
-        reactiveRedisTemplate.convertAndSend("coupon-completion-topic", failJson).awaitSingle()
+        reactiveRedisTemplate.convertAndSend("coupon-completion-topic", failJson).subscribe()
     }
 
     suspend fun waitUntilSseResponse(correlationId: String): String? {
