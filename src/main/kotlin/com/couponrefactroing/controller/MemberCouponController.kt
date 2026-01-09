@@ -28,12 +28,10 @@ class MemberCouponController(
 
     @PostMapping("/stream/issue", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun issueCouponSse(@RequestBody request: IssueCouponRequest): Flow<ServerSentEvent<String>> = flow {
-        // [타이머 시작]
         val startTime = System.currentTimeMillis()
         val memberId = request.memberId
 
         coroutineScope {
-
             log.info("[SSE Start] Member: $memberId - 요청 시작")
 
             val correlationId = UUID.randomUUID().toString()
@@ -42,7 +40,9 @@ class MemberCouponController(
                 try {
                     couponIssuer.waitUntilSseResponse(correlationId)
                 } catch (e: TimeoutException) {
-                    couponIssuer.checkSseResponse(correlationId)
+                    if(!couponIssuer.checkSseResponse(correlationId)){
+                        throw e
+                    }
                 }
                 return@async "성공"
             }

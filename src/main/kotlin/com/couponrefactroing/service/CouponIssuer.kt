@@ -14,7 +14,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactive.awaitSingle
 import kotlinx.coroutines.withContext
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.data.redis.core.ReactiveRedisTemplate
+import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.listener.ChannelTopic
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.kafka.core.KafkaTemplate
@@ -27,7 +29,6 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
-import java.util.UUID
 
 /**
  * 쿠폰 발급 로직 - Redis 캐시 버전
@@ -45,7 +46,9 @@ class CouponIssuer(
     private val memberFrontmen: MemberFrontMen,
     private val stockCache: CouponStockCacheService,
     private val duplicateChecker: CouponIssueDuplicateChecker,
+    @Qualifier("reactiveRedisTemplate")
     private val reactiveRedisTemplate: ReactiveRedisTemplate<String, String>,
+    private val stringRedisTemplate: StringRedisTemplate,
     private val kafkaTemplate: KafkaTemplate<String, IssueCouponEvent>,
     private val transactionTemplate: TransactionTemplate
 ) : CouponIssueService {
@@ -171,7 +174,7 @@ class CouponIssuer(
         }
     }
 
-    private fun sendCouponSuccessToRedis(eventId: String, savedCouponId: Long?) {
+    suspend fun sendCouponSuccessToRedis(eventId: String, savedCouponId: Long?) {
         val successJson = """
                 {
                     "correlationId": "$eventId",
@@ -180,11 +183,11 @@ class CouponIssuer(
                 }
             """.trimIndent()
 
-        // Redis로 발사! -> Waiter가 받음
-        reactiveRedisTemplate.convertAndSend("coupon-completion-topic", successJson).subscribe()
+        stringRedisTemplate.opsForValue().set(eventId, "true", Duration.ofMinutes(10))
+        reactiveRedisTemplate.convertAndSend("coupon-completion-topic", successJson).awaitSingle()
     }
 
-    private fun sendCouponFailureToRedis(eventId: String, couponId: Long) {
+    private suspend fun sendCouponFailureToRedis(eventId: String, couponId: Long) {
         // JSON 깨짐 방지를 위해 따옴표(")는 작은따옴표(')로 치환하거나 이스케이프 처리
         val failJson = """
         {
@@ -195,7 +198,7 @@ class CouponIssuer(
     """.trimIndent()
 
         // Redis로 발사!
-        reactiveRedisTemplate.convertAndSend("coupon-completion-topic", failJson).subscribe()
+        reactiveRedisTemplate.convertAndSend("coupon-completion-topic", failJson).awaitSingle()
     }
 
     suspend fun waitUntilSseResponse(correlationId: String): String {
@@ -205,7 +208,7 @@ class CouponIssuer(
             .map { it.message }
             .filter { it.contains(correlationId) }
             .next()
-            .timeout(Duration.of(3, ChronoUnit.SECONDS))
+            .timeout(Duration.of(5, ChronoUnit.SECONDS))
             .awaitSingle()
     }
 
