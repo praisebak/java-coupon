@@ -200,7 +200,7 @@ class CouponIssuer(
         reactiveRedisTemplate.convertAndSend("coupon-completion-topic", failJson).awaitSingle()
     }
 
-    suspend fun waitUntilSseResponse(correlationId: String): String {
+    suspend fun waitUntilSseResponse(correlationId: String): String{
         val topic = ChannelTopic("coupon-completion-topic")
 
         return reactiveRedisTemplate.listenTo(topic)
@@ -209,9 +209,5 @@ class CouponIssuer(
             .next()
             .timeout(Duration.of(5, ChronoUnit.SECONDS))
             .awaitSingle()
-    }
-
-    suspend fun checkSseResponse(correlationId: String): Boolean{
-        return reactiveRedisTemplate.opsForValue().get(correlationId).awaitSingle() != null
     }
 }

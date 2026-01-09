@@ -40,10 +40,9 @@ class MemberCouponController(
                 try {
                     couponIssuer.waitUntilSseResponse(correlationId)
                 } catch (e: TimeoutException) {
-                    if(!couponIssuer.checkSseResponse(correlationId)){
-                        throw e
-                    }
+                    return@async "SSE 타임아웃 - 클라이언트에서 재시작 요청 필요"
                 }
+
                 return@async "성공"
             }
 
