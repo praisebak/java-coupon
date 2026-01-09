@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactive.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.withContext
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.data.redis.core.ReactiveRedisTemplate
@@ -93,7 +94,10 @@ class CouponIssuer(
         return correlationId
     }
 
-    @KafkaListener(topicPattern = "issue-coupon")
+    @KafkaListener(
+        topicPattern = "issue-coupon",
+        concurrency = "10"
+    )
     suspend fun issueCoupon(issueCouponEvent : IssueCouponEvent){
         withContext(Dispatchers.IO) {
             val start = Instant.now()
@@ -182,7 +186,6 @@ class CouponIssuer(
                 }
             """.trimIndent()
 
-        stringRedisTemplate.opsForValue().set(eventId, "true", Duration.ofMinutes(10))
         reactiveRedisTemplate.convertAndSend("coupon-completion-topic", successJson).awaitSingle()
     }
 
@@ -200,7 +203,7 @@ class CouponIssuer(
         reactiveRedisTemplate.convertAndSend("coupon-completion-topic", failJson).awaitSingle()
     }
 
-    suspend fun waitUntilSseResponse(correlationId: String): String{
+    suspend fun waitUntilSseResponse(correlationId: String): String? {
         val topic = ChannelTopic("coupon-completion-topic")
 
         return reactiveRedisTemplate.listenTo(topic)
@@ -208,6 +211,6 @@ class CouponIssuer(
             .filter { it.contains(correlationId) }
             .next()
             .timeout(Duration.of(5, ChronoUnit.SECONDS))
-            .awaitSingle()
+            .awaitSingleOrNull()
     }
 }
