@@ -46,7 +46,6 @@ class CouponIssuer(
     private val memberFrontmen: MemberFrontMen,
     private val stockCache: CouponStockCacheService,
     private val duplicateChecker: CouponIssueDuplicateChecker,
-    @Qualifier("reactiveRedisTemplate")
     private val reactiveRedisTemplate: ReactiveRedisTemplate<String, String>,
     private val stringRedisTemplate: StringRedisTemplate,
     private val kafkaTemplate: KafkaTemplate<String, IssueCouponEvent>,
