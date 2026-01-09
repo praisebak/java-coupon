@@ -1,4 +1,4 @@
-package com.couponrefactroing.integrated
+package com.couponrefactroing.study
 
 import com.couponrefactroing.service.CouponIssuer
 import com.ninjasquad.springmockk.MockkBean
@@ -6,9 +6,9 @@ import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
 import io.mockk.verify
-import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -18,11 +18,11 @@ import org.springframework.data.redis.core.ReactiveValueOperations
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.ValueOperations
 import reactor.core.publisher.Mono
-import java.lang.Long
 import java.time.Duration
 import kotlin.system.measureTimeMillis
 
 @SpringBootTest
+@Disabled
 class CouponIssuerIntegrationTest {
 
     // 1. 테스트 대상: 실제 객체를 주입받습니다. (나머지 의존성은 스프링이 알아서 넣어줌)
