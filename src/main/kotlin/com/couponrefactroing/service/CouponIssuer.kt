@@ -111,7 +111,7 @@ class CouponIssuer(
 //                validateAlreadyAssignedCoupon(couponId, memberId)
                 stockCache.decreaseStock(couponId)
                 transactionTemplate.execute { status ->
-                    decreaseStock(couponId)
+//                    decreaseStock(couponId)
                     saveMemberCoupon(memberId, couponId)
                 }
 
