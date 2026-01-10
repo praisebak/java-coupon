@@ -10,6 +10,7 @@ import com.couponrefactroing.repository.MemberCouponRepository
 import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.*
 import kotlinx.coroutines.reactive.awaitSingle
+import kotlinx.coroutines.reactive.collect
 import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.data.redis.core.StringRedisTemplate
@@ -186,7 +187,7 @@ class CouponIssuer(
      * [핵심 변경] O(N^2) -> O(1) 성능 개선
      * Map에 내 요청을 등록하고, 리스너가 채워주기를 기다림
      */
-    override suspend fun waitUntilSseResponse(correlationId: String): String? {
+    suspend fun waitUntilSseResponse(correlationId: String): String? {
         val deferred = CompletableDeferred<String>()
 
         // 1. 우편함 등록
