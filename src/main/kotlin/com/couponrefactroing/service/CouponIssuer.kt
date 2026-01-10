@@ -7,6 +7,7 @@ import com.couponrefactroing.dto.CouponAddRequest
 import com.couponrefactroing.dto.IssueCouponEvent
 import com.couponrefactroing.repository.CouponRepository
 import com.couponrefactroing.repository.MemberCouponRepository
+import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.*
 import kotlinx.coroutines.reactive.awaitSingle
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeoutException
 
 /**
  * 쿠폰 발급 로직 - 성능 최적화 버전 (Map Dispatcher 적용)
@@ -38,7 +40,8 @@ class CouponIssuer(
     private val reactiveRedisTemplate: ReactiveRedisTemplate<String, String>,
     private val stringRedisTemplate: StringRedisTemplate, // 사용 안하면 제거 가능
     private val kafkaTemplate: KafkaTemplate<String, IssueCouponEvent>,
-    private val transactionTemplate: TransactionTemplate
+    private val transactionTemplate: TransactionTemplate,
+    private val objectMapper: ObjectMapper
 ) : CouponIssueService {
 
     private val log = LoggerFactory.getLogger(this::class.java)
@@ -52,29 +55,24 @@ class CouponIssuer(
      * 메시지가 오면 JSON을 파싱해서 ID를 찾고, 해당 ID를 기다리는 요청자에게 전달
      */
     @PostConstruct
-    fun initRedisListener() {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                reactiveRedisTemplate.listenTo(topic)
-                    .collect { message ->
-                        try {
-                            val payload = message.message
-                            // 빠른 처리를 위해 단순 문자열 파싱으로 ID 추출
-                            val correlationId = extractCorrelationId(payload)
+    fun startGlobalRedisListener() {
+        reactiveRedisTemplate.listenTo(ChannelTopic("coupon-completion-topic"))
+            .map { it.message } // 메시지 본문 추출
+            .doOnNext { message ->
+                try {
+                    // 메시지에서 ID 추출 (JSON 파싱 비용 최소화 위해 필요한 필드만 보시거나, 여기서 파싱)
+                    val rootNode = objectMapper.readTree(message)
+                    val correlationId = rootNode.path("correlationId").asText()
 
-                            // 우편함에 주인이 있다면 배달 (Wake up)
-                            if (correlationId.isNotEmpty()) {
-                                pendingRequests[correlationId]?.complete(payload)
-                            }
-                        } catch (e: Exception) {
-                            log.error("메시지 디스패치 중 에러", e)
-                        }
-                    }
-            } catch (e: Exception) {
-                log.error("Redis 리스너 치명적 오류", e)
+                    // ⭐ 대기 중인 녀석이 있으면 깨워준다 (값 넣어주고 완료 처리)
+                    // remove를 여기서 바로 하지 않는 이유는 await() 쪽에서 확실히 받고 지우기 위함(선택 사항)
+                    pendingRequests[correlationId]?.complete(message)
+                } catch (e: Exception) {
+                    // 파싱 에러 등은 로그만 찍고 넘어감 (리스너가 죽으면 안됨)
+                    println("Redis Listener Error: ${e.message}")
+                }
             }
-        }
-        log.info("✓ CouponIssuer 성능 최적화 모드 활성화 (Map Dispatcher)")
+            .subscribe() // 구독 시작 (WebFlux 방식)
     }
 
     /**
@@ -187,24 +185,23 @@ class CouponIssuer(
      * [핵심 변경] O(N^2) -> O(1) 성능 개선
      * Map에 내 요청을 등록하고, 리스너가 채워주기를 기다림
      */
-    suspend fun waitUntilSseResponse(correlationId: String): String? {
+    suspend fun waitUntilSseResponse(correlationId: String): String {
+        // 1. 빈 약속 상자(Deferred) 생성
         val deferred = CompletableDeferred<String>()
 
-        synchronized(pendingRequests) {
-            pendingRequests[correlationId] = deferred
-        }
+        // 2. 맵에 등록 ("이 ID로 연락 오면 이 상자에 넣어주세요")
+        pendingRequests[correlationId] = deferred
 
-        return try {
-            withTimeout(15_000) {
-                deferred.await()
+        try {
+            // 3. 15초 동안 답이 올 때까지 '일시 중단' (스레드는 다른 일 하러 감!)
+            return withTimeout(15000) {
+                deferred.await() // 여기서 답이 올 때까지 멈춤 (Blocking 아님)
             }
         } catch (e: TimeoutCancellationException) {
-            log.warn("[Wait] 타임아웃: correlationId=$correlationId")
-            null
+            throw TimeoutException("Redis 응답 시간 초과 (15초)")
         } finally {
-            synchronized(pendingRequests) {
-                pendingRequests.remove(correlationId)
-            }
+            // 4. 성공하든 실패하든 맵에서 제거 (메모리 누수 방지)
+            pendingRequests.remove(correlationId)
         }
     }
 
