@@ -190,19 +190,21 @@ class CouponIssuer(
     suspend fun waitUntilSseResponse(correlationId: String): String? {
         val deferred = CompletableDeferred<String>()
 
-        // 1. 우편함 등록
-        pendingRequests[correlationId] = deferred
+        synchronized(pendingRequests) {
+            pendingRequests[correlationId] = deferred
+        }
 
         return try {
-            // 2. 15초 대기 (타임아웃 시 Exception 발생)
             withTimeout(15_000) {
                 deferred.await()
             }
         } catch (e: TimeoutCancellationException) {
-            null // 타임아웃
+            log.warn("[Wait] 타임아웃: correlationId=$correlationId")
+            null
         } finally {
-            // 3. 메모리 누수 방지를 위해 반드시 제거
-            pendingRequests.remove(correlationId)
+            synchronized(pendingRequests) {
+                pendingRequests.remove(correlationId)
+            }
         }
     }
 
