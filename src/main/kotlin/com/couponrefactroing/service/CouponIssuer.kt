@@ -119,7 +119,9 @@ class CouponIssuer(
 
                 val end = Instant.now()
                 val duration = Duration.between(start, end)
-                println("소요된 시간 = $duration")
+                if(duration.seconds >= 1){
+                    println("소요된 시간 = $duration")
+                }
 
             } catch (e: RuntimeException) {
                 duplicateChecker.clearMark(couponId, memberId)

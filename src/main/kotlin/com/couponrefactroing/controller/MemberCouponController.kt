@@ -17,6 +17,8 @@ import kotlin.jvm.java
 import org.slf4j.LoggerFactory
 import java.util.UUID
 import java.util.concurrent.TimeoutException
+import kotlin.system.measureTimeMillis
+import kotlin.time.measureTimedValue
 
 @RestController
 @RequestMapping("/member-coupons")
@@ -28,74 +30,88 @@ class MemberCouponController(
 
     @PostMapping("/stream/issue", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun issueCouponSse(@RequestBody request: IssueCouponRequest): Flow<ServerSentEvent<String>> = flow {
-        val startTime = System.currentTimeMillis()
+        val totalStartTime = System.currentTimeMillis()
         val memberId = request.memberId
+        // 트랜잭션 추적 ID 생성
+        val correlationId = UUID.randomUUID().toString()
 
         try {
             coroutineScope {
-                log.info("[SSE Start] Member: $memberId - 요청 시작")
+                // [1] 시작 로그
+                log.info("[$correlationId] [SSE Start] Member: $memberId - 요청 시작")
 
-                val correlationId = UUID.randomUUID().toString()
-
+                // [2] Redis 응답 대기 (Async)
                 val resultDeferred = async {
-                    try {
-                        val waitUntilSseResponse = couponIssuer.waitUntilSseResponse(correlationId)
-                        if(waitUntilSseResponse == null){
-                            return@async "SSE 타임아웃 - 클라이언트에서 재시작 요청 필요"
-                        }
+                    log.info("[$correlationId] [SSE Async] Redis 응답 대기 시작")
 
-                    } catch (e: TimeoutException) {
+                    val (response, duration) = measureTimedValue {
+                        try {
+                            couponIssuer.waitUntilSseResponse(correlationId)
+                        } catch (e: TimeoutException) {
+                            null
+                        }
+                    }
+
+                    val elapsedMs = duration.inWholeMilliseconds
+                    log.info("[$correlationId] [SSE Async] Redis 응답 수신 완료 (소요시간: ${elapsedMs}ms)")
+
+                    if (response == null) {
                         return@async "SSE 타임아웃 - 클라이언트에서 재시작 요청 필요"
                     }
-                    return@async "성공"
+                    return@async response
                 }
 
-                couponIssuer.issueCoupon(request.couponId, request.memberId, correlationId)
+                // [3] 쿠폰 발급 요청 (Publisher)
+                val issueTime = measureTimeMillis {
+                    couponIssuer.issueCoupon(request.couponId, request.memberId, correlationId)
+                }
+                log.info("[$correlationId] [SSE Publish] 쿠폰 발급 요청 전송 완료 (소요시간: ${issueTime}ms)")
 
                 // STATUS 이벤트 전송
-                val statusEvent = ServerSentEvent.builder<String>()
+                emit(ServerSentEvent.builder<String>()
                     .event("STATUS")
                     .data("접수 완료 ($correlationId). 처리 중입니다...")
-                    .build()
-                emit(statusEvent)
+                    .build())
 
-                // 결과 대기
+                // [4] 결과 대기 (Await)
                 try {
-                    val resultJson: String = resultDeferred.await()
+                    val (resultJson, awaitDuration) = measureTimedValue {
+                        resultDeferred.await()
+                    }
 
-                    // RESULT 이벤트 전송
-                    val resultEvent = ServerSentEvent.builder<String>()
+                    log.info("[$correlationId] [SSE Await] 최종 결과 수신 (대기시간: ${awaitDuration.inWholeMilliseconds}ms, 결과: $resultJson)")
+
+                    emit(ServerSentEvent.builder<String>()
                         .event("RESULT")
                         .data(resultJson)
-                        .build()
-                    emit(resultEvent)
-
-                    // ✅ 핵심: 명시적으로 완료 신호 전송 (SSE 스펙 준수)
-                    emit(ServerSentEvent.builder<String>()
-                        .event("COMPLETE")
-                        .data("END")
                         .build())
 
+                    emit(ServerSentEvent.builder<String>().event("COMPLETE").data("END").build())
+
                 } catch (e: Exception) {
+                    // 에러 로그에도 ID 포함
+                    log.error("[$correlationId] [SSE Error] 대기 중 에러 발생", e)
+
                     emit(ServerSentEvent.builder<String>()
                         .event("ERROR")
                         .data("시간 초과 또는 오류 발생: ${e.message}")
                         .build())
 
-                    // ✅ 에러 시에도 완료 신호 전송
-                    emit(ServerSentEvent.builder<String>()
-                        .event("COMPLETE")
-                        .data("END")
-                        .build())
+                    emit(ServerSentEvent.builder<String>().event("COMPLETE").data("END").build())
                 }
             }
         } catch (e: Exception) {
+            // 시스템 에러 로그에도 ID 포함
+            log.error("[$correlationId] [SSE System Error]", e)
+
             emit(ServerSentEvent.builder<String>()
                 .event("ERROR")
                 .data("시스템 오류: ${e.message}")
                 .build())
+        } finally {
+            val totalTime = System.currentTimeMillis() - totalStartTime
+            log.info("[$correlationId] [SSE End] 전체 요청 종료 (총 소요시간: ${totalTime}ms)")
         }
-        // ✅ Flow가 자동으로 완료됨 (명시적 종료 불필요하지만, COMPLETE 이벤트로 클라이언트에게 알림)
     }
 
     @GetMapping("/by-member-id")
