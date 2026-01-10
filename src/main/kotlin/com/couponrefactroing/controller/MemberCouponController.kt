@@ -34,11 +34,12 @@ class MemberCouponController(
         val memberId = request.memberId
         // 트랜잭션 추적 ID 생성
         val correlationId = UUID.randomUUID().toString()
+        val logId = correlationId.subSequence(0,8)
 
         try {
             coroutineScope {
                 // [1] 시작 로그
-                log.info("[$correlationId] [SSE Start] Member: $memberId - 요청 시작")
+                log.info("[$logId] [SSE Start] Member: $memberId - 요청 시작")
 
                 // [2] Redis 응답 대기 (Async)
                 val resultDeferred = async {
@@ -48,12 +49,13 @@ class MemberCouponController(
                         try {
                             couponIssuer.waitUntilSseResponse(correlationId)
                         } catch (e: TimeoutException) {
+                            log.info("[$logId] [SSE Async] 타임아웃으로 실패")
                             null
                         }
                     }
 
                     val elapsedMs = duration.inWholeMilliseconds
-                    log.info("[$correlationId] [SSE Async] Redis 응답 수신 완료 (소요시간: ${elapsedMs}ms)")
+                    log.info("[$logId] [SSE Async] (소요시간: ${elapsedMs}ms) Redis 응답 수신 완료")
 
                     if (response == null) {
                         return@async "SSE 타임아웃 - 클라이언트에서 재시작 요청 필요"
@@ -65,7 +67,7 @@ class MemberCouponController(
                 val issueTime = measureTimeMillis {
                     couponIssuer.issueCoupon(request.couponId, request.memberId, correlationId)
                 }
-                log.info("[$correlationId] [SSE Publish] 쿠폰 발급 요청 전송 완료 (소요시간: ${issueTime}ms)")
+                log.info("[$logId] [SSE Publish] (소요시간: ${issueTime}ms) 쿠폰 발급 요청 전송 완료 ")
 
                 // STATUS 이벤트 전송
                 emit(ServerSentEvent.builder<String>()
@@ -79,7 +81,7 @@ class MemberCouponController(
                         resultDeferred.await()
                     }
 
-                    log.info("[$correlationId] [SSE Await] 최종 결과 수신 (대기시간: ${awaitDuration.inWholeMilliseconds}ms, 결과: $resultJson)")
+                    log.info("[$logId] [SSE Await] (대기시간: ${awaitDuration.inWholeMilliseconds}ms, 최종 결과 수신 결과: $resultJson)")
 
                     emit(ServerSentEvent.builder<String>()
                         .event("RESULT")
@@ -90,7 +92,7 @@ class MemberCouponController(
 
                 } catch (e: Exception) {
                     // 에러 로그에도 ID 포함
-                    log.error("[$correlationId] [SSE Error] 대기 중 에러 발생", e)
+                    log.error("[$logId] [SSE Error] 대기 중 에러 발생", e)
 
                     emit(ServerSentEvent.builder<String>()
                         .event("ERROR")

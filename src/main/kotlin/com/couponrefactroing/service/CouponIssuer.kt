@@ -95,13 +95,10 @@ class CouponIssuer(
     }
 
     @KafkaListener(
-        topicPattern = "issue-coupon",
-        concurrency = "10"
+        topicPattern = "issue-coupon"
     )
     suspend fun issueCoupon(issueCouponEvent : IssueCouponEvent){
         withContext(Dispatchers.IO) {
-            val start = Instant.now()
-
             val memberId = issueCouponEvent.memberId
             val couponId = issueCouponEvent.couponId
             val eventId = issueCouponEvent.eventId
@@ -112,17 +109,10 @@ class CouponIssuer(
                 stockCache.decreaseStock(couponId)
                 transactionTemplate.execute { status ->
 //                    decreaseStock(couponId)
-                    saveMemberCoupon(memberId, couponId)
+//                    saveMemberCoupon(memberId, couponId)
                 }
 
                 sendCouponSuccessToRedis(eventId, couponId)
-
-                val end = Instant.now()
-                val duration = Duration.between(start, end)
-                if(duration.seconds >= 1){
-                    println("소요된 시간 = $duration")
-                }
-
             } catch (e: RuntimeException) {
                 duplicateChecker.clearMark(couponId, memberId)
                 sendCouponFailureToRedis(eventId,couponId)

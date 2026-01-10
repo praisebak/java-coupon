@@ -219,10 +219,10 @@ jobs:
           DB_PASSWORD=${DB_PASSWORD}
           DB_ROOT_PASSWORD=${DB_PASSWORD}
           SPRING_PROFILES_ACTIVE=prod
-          SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/${DB_NAME}
+          SPRING_DATASOURCE_URL=jdbc:mysql://coupon-mysql:3306/${DB_NAME}
           SPRING_DATASOURCE_USERNAME=${DB_USER}
           SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
-          SPRING_DATA_REDIS_HOST=redis
+          SPRING_DATA_REDIS_HOST=coupon-redis
           SPRING_DATA_REDIS_PORT=6379
           ENV_EOF
             fi
