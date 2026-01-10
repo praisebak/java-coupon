@@ -114,11 +114,6 @@ class MemberCouponController(
             } catch (e: Exception) {
                 addLog("[SSE System Error] 시스템 오류: ${e.message}")
                 log.error("[$logId] [SSE System Error]\n$traceLog", e)
-
-                emit(ServerSentEvent.builder<String>()
-                    .event("ERROR")
-                    .data("시스템 오류: ${e.message}")
-                    .build())
             } finally {
                 val totalTime = System.currentTimeMillis() - totalStartTime
                 addLog("[SSE End] 전체 요청 종료 (총 소요시간: ${totalTime}ms)")

@@ -10,6 +10,7 @@ import org.springframework.data.redis.connection.RedisConnectionFactory
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration
 import io.lettuce.core.api.StatefulConnection
 import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory
 import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration
 import org.springframework.data.redis.core.ReactiveRedisTemplate
@@ -27,27 +28,26 @@ class RedisConfig {
     private var port: Int = 6379
 
     @Bean
-    fun redisConnectionFactory(): RedisConnectionFactory {
+    fun redisConnectionFactory(): LettuceConnectionFactory {
         val configuration = RedisStandaloneConfiguration(host, port)
 
-        val poolConfig = GenericObjectPoolConfig<Any>().apply {
-            maxTotal = 100  // max-active
-            maxIdle = 50
-            minIdle = 10
-            setMaxWait(Duration.ofMillis(10000)) // max-wait
-        }
+        // [수정 포인트 1] 소켓 옵션 및 타임아웃 보강
+        val clientOptions = ClientOptions.builder()
+            .socketOptions(SocketOptions.builder()
+                .connectTimeout(Duration.ofSeconds(10)) // 연결 타임아웃
+                .keepAlive(true)
+                .build())
+            .autoReconnect(true) // 자동 재연결 활성화
+            .build()
 
-        val clientConfig = LettucePoolingClientConfiguration.builder()
-            .commandTimeout(Duration.ofMillis(5000))
-            .clientOptions(
-                ClientOptions.builder()
-                    .socketOptions(SocketOptions.builder().keepAlive(true).build())
-                    .build()
-            )
-            .poolConfig(poolConfig as GenericObjectPoolConfig<StatefulConnection<*, *>>)
+        val clientConfig = LettuceClientConfiguration.builder()
+            .clientOptions(clientOptions)
+            .commandTimeout(Duration.ofSeconds(60)) // [중요] 명령 타임아웃 5초 -> 60초로 넉넉하게
             .build()
 
         val factory = LettuceConnectionFactory(configuration, clientConfig)
+
+        factory.validateConnection = true
 
         return factory
     }
