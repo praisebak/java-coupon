@@ -208,7 +208,7 @@ class CouponIssuer(
         return messageFlux
             .filter { it.contains(correlationId) }
             .next()
-            .timeout(Duration.of(5, ChronoUnit.SECONDS))
+            .timeout(Duration.of(15, ChronoUnit.SECONDS))
             .awaitSingleOrNull()
     }
 }
