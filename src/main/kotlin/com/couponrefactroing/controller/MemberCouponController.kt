@@ -30,91 +30,105 @@ class MemberCouponController(
 
     @PostMapping("/stream/issue", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun issueCouponSse(@RequestBody request: IssueCouponRequest): Flow<ServerSentEvent<String>> = flow {
-        val totalStartTime = System.currentTimeMillis()
-        val memberId = request.memberId
-        // 트랜잭션 추적 ID 생성
-        val correlationId = UUID.randomUUID().toString()
-        val logId = correlationId.subSequence(0,8)
+            val totalStartTime = System.currentTimeMillis()
+            val memberId = request.memberId
+            val correlationId = UUID.randomUUID().toString()
+            val logId = correlationId.substring(0, 8)
 
-        try {
-            coroutineScope {
-                // [1] 시작 로그
-                log.info("[$logId] [SSE Start] Member: $memberId - 요청 시작")
+            // 로그를 모아둘 버퍼 (비동기 접근 고려하여 StringBuffer 사용)
+            val traceLog = StringBuffer()
 
-                // [2] Redis 응답 대기 (Async)
-                val resultDeferred = async {
-                    log.info("[$correlationId] [SSE Async] Redis 응답 대기 시작")
+            // 내부 로깅용 헬퍼 함수
+            fun addLog(msg: String) {
+                traceLog.append("[$logId] $msg\n")
+            }
 
-                    val (response, duration) = measureTimedValue {
-                        try {
-                            couponIssuer.waitUntilSseResponse(correlationId)
-                        } catch (e: TimeoutException) {
-                            log.info("[$logId] [SSE Async] 타임아웃으로 실패")
-                            null
+            try {
+                coroutineScope {
+                    // [1] 시작 기록
+                    addLog("[SSE Start] Member: $memberId - 요청 시작")
+
+                    // [2] Redis 응답 대기 (Async)
+                    val resultDeferred = async {
+                        addLog("[SSE Async] Redis 응답 대기 시작")
+
+                        val (response, duration) = measureTimedValue {
+                            try {
+                                couponIssuer.waitUntilSseResponse(correlationId)
+                            } catch (e: TimeoutException) {
+                                addLog("[SSE Async] 타임아웃으로 실패")
+                                null
+                            }
                         }
+
+                        val elapsedMs = duration.inWholeMilliseconds
+                        addLog("[SSE Async] (소요시간: ${elapsedMs}ms) Redis 응답 수신 완료")
+
+                        if (response == null) {
+                            return@async "SSE 타임아웃 - 클라이언트에서 재시작 요청 필요"
+                        }
+                        return@async response
                     }
 
-                    val elapsedMs = duration.inWholeMilliseconds
-                    log.info("[$logId] [SSE Async] (소요시간: ${elapsedMs}ms) Redis 응답 수신 완료")
-
-                    if (response == null) {
-                        return@async "SSE 타임아웃 - 클라이언트에서 재시작 요청 필요"
+                    // [3] 쿠폰 발급 요청 (Publisher)
+                    val issueTime = measureTimeMillis {
+                        couponIssuer.issueCoupon(request.couponId, request.memberId, correlationId)
                     }
-                    return@async response
-                }
+                    addLog("[SSE Publish] (소요시간: ${issueTime}ms) 쿠폰 발급 요청 전송 완료")
 
-                // [3] 쿠폰 발급 요청 (Publisher)
-                val issueTime = measureTimeMillis {
-                    couponIssuer.issueCoupon(request.couponId, request.memberId, correlationId)
-                }
-                log.info("[$logId] [SSE Publish] (소요시간: ${issueTime}ms) 쿠폰 발급 요청 전송 완료 ")
+                    // STATUS 이벤트 전송
+                    emit(ServerSentEvent.builder<String>()
+                        .event("STATUS")
+                        .data("접수 완료 ($correlationId). 처리 중입니다...")
+                        .build())
 
-                // STATUS 이벤트 전송
+                    // [4] 결과 대기 (Await)
+                    try {
+                        val (resultJson, awaitDuration) = measureTimedValue {
+                            resultDeferred.await()
+                        }
+
+                        addLog("[SSE Await] (대기시간: ${awaitDuration.inWholeMilliseconds}ms, 결과: $resultJson)")
+
+                        emit(ServerSentEvent.builder<String>()
+                            .event("RESULT")
+                            .data(resultJson)
+                            .build())
+
+                        emit(ServerSentEvent.builder<String>().event("COMPLETE").data("END").build())
+
+                    } catch (e: Exception) {
+                        // 에러 발생 시에는 시간 관계없이 로그를 남겨야 하므로 error 레벨로 즉시 출력할 수도 있지만,
+                        // 여기서는 흐름 파악을 위해 buffer 내용을 포함해서 출력
+                        addLog("[SSE Error] 대기 중 에러 발생: ${e.message}")
+                        log.error("[$logId] [SSE Error] 요청 처리 중 예외 발생\n$traceLog", e)
+
+                        emit(ServerSentEvent.builder<String>()
+                            .event("ERROR")
+                            .data("오류 발생: ${e.message}")
+                            .build())
+
+                        emit(ServerSentEvent.builder<String>().event("COMPLETE").data("END").build())
+                    }
+                }
+            } catch (e: Exception) {
+                addLog("[SSE System Error] 시스템 오류: ${e.message}")
+                log.error("[$logId] [SSE System Error]\n$traceLog", e)
+
                 emit(ServerSentEvent.builder<String>()
-                    .event("STATUS")
-                    .data("접수 완료 ($correlationId). 처리 중입니다...")
+                    .event("ERROR")
+                    .data("시스템 오류: ${e.message}")
                     .build())
+            } finally {
+                val totalTime = System.currentTimeMillis() - totalStartTime
+                addLog("[SSE End] 전체 요청 종료 (총 소요시간: ${totalTime}ms)")
 
-                // [4] 결과 대기 (Await)
-                try {
-                    val (resultJson, awaitDuration) = measureTimedValue {
-                        resultDeferred.await()
-                    }
-
-                    log.info("[$logId] [SSE Await] (대기시간: ${awaitDuration.inWholeMilliseconds}ms, 최종 결과 수신 결과: $resultJson)")
-
-                    emit(ServerSentEvent.builder<String>()
-                        .event("RESULT")
-                        .data(resultJson)
-                        .build())
-
-                    emit(ServerSentEvent.builder<String>().event("COMPLETE").data("END").build())
-
-                } catch (e: Exception) {
-                    // 에러 로그에도 ID 포함
-                    log.error("[$logId] [SSE Error] 대기 중 에러 발생", e)
-
-                    emit(ServerSentEvent.builder<String>()
-                        .event("ERROR")
-                        .data("시간 초과 또는 오류 발생: ${e.message}")
-                        .build())
-
-                    emit(ServerSentEvent.builder<String>().event("COMPLETE").data("END").build())
+                // [핵심 로직] 전체 소요 시간이 5초(5000ms)를 넘을 때만 로그 출력
+                if (totalTime >= 5000) {
+                    log.warn("========= SLOW REQUEST DETECTED ($totalTime ms) =========\n$traceLog")
                 }
             }
-        } catch (e: Exception) {
-            // 시스템 에러 로그에도 ID 포함
-            log.error("[$correlationId] [SSE System Error]", e)
-
-            emit(ServerSentEvent.builder<String>()
-                .event("ERROR")
-                .data("시스템 오류: ${e.message}")
-                .build())
-        } finally {
-            val totalTime = System.currentTimeMillis() - totalStartTime
-            log.info("[$correlationId] [SSE End] 전체 요청 종료 (총 소요시간: ${totalTime}ms)")
         }
-    }
 
     @GetMapping("/by-member-id")
     suspend fun getMemberCoupons(@RequestParam("memberId") memberId: Long?): List<MemberCouponResponse> {

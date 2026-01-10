@@ -53,6 +53,12 @@ class CouponIssuer(
     private val transactionTemplate: TransactionTemplate
 ) : CouponIssueService {
 
+    private val topic = ChannelTopic("coupon-completion-topic")
+
+    private val messageFlux = reactiveRedisTemplate.listenTo(topic)
+        .map { it.message }
+        .share()  // Hot publisher로 공유
+
     @PostConstruct
     fun afterInit(){
         println("✓ CouponIssuer enabled (Redis 캐시 모드)")
@@ -95,7 +101,8 @@ class CouponIssuer(
     }
 
     @KafkaListener(
-        topicPattern = "issue-coupon"
+        topicPattern = "issue-coupon",
+        concurrency = "20"
     )
     suspend fun issueCoupon(issueCouponEvent : IssueCouponEvent){
         withContext(Dispatchers.IO) {
@@ -197,10 +204,8 @@ class CouponIssuer(
     }
 
     suspend fun waitUntilSseResponse(correlationId: String): String? {
-        val topic = ChannelTopic("coupon-completion-topic")
 
-        return reactiveRedisTemplate.listenTo(topic)
-            .map { it.message }
+        return messageFlux
             .filter { it.contains(correlationId) }
             .next()
             .timeout(Duration.of(5, ChronoUnit.SECONDS))

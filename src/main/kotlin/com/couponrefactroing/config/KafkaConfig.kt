@@ -10,7 +10,7 @@ class KafkaConfig {
     @Bean
     fun issueCouponTopic(): NewTopic {
         return TopicBuilder.name("issue-coupon")
-            .partitions(1)
+            .partitions(20)
             .replicas(1)
             .build()
     }
