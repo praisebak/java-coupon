@@ -194,7 +194,7 @@ class CouponIssuer(
 
         try {
             // 3. 15초 동안 답이 올 때까지 '일시 중단' (스레드는 다른 일 하러 감!)
-            return withTimeout(15000) {
+            return withTimeout(60000) {
                 deferred.await() // 여기서 답이 올 때까지 멈춤 (Blocking 아님)
             }
         } catch (e: TimeoutCancellationException) {
