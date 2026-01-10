@@ -30,7 +30,6 @@ class RedisConfig {
     fun redisConnectionFactory(): RedisConnectionFactory {
         val configuration = RedisStandaloneConfiguration(host, port)
 
-        // 커넥션 풀 설정
         val poolConfig = GenericObjectPoolConfig<Any>().apply {
             maxTotal = 100  // max-active
             maxIdle = 50
@@ -48,9 +47,7 @@ class RedisConfig {
             .poolConfig(poolConfig as GenericObjectPoolConfig<StatefulConnection<*, *>>)
             .build()
 
-        // LettuceConnectionFactory 생성 시 shareNativeConnection을 false로 세팅
         val factory = LettuceConnectionFactory(configuration, clientConfig)
-        factory.shareNativeConnection = false // [여기!] 이게 true면 풀 안씀
 
         return factory
     }

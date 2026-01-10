@@ -204,7 +204,6 @@ class CouponIssuer(
     }
 
     suspend fun waitUntilSseResponse(correlationId: String): String? {
-
         return messageFlux
             .filter { it.contains(correlationId) }
             .next()
