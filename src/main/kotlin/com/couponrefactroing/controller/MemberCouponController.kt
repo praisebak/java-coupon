@@ -52,7 +52,7 @@ class MemberCouponController(
                 is IllegalStateException -> "SOLD_OUT" to (e.message ?: "재고 없음")
                 else -> "SYSTEM_ERROR" to "오류 발생: ${e.message}"
             }
-
+            log.error("MCC 컨트롤러에서 에러 발생 = " + e.message)
             val errorJson = objectMapper.writeValueAsString(mapOf("code" to code, "message" to message))
             emit(sse("ERROR", errorJson))
         } finally {

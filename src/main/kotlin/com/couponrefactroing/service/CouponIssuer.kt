@@ -20,6 +20,7 @@ import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeoutException
@@ -40,7 +41,8 @@ class CouponIssuer(
     private val kafkaTemplate: KafkaTemplate<String, IssueCouponEvent>,
     private val objectMapper: ObjectMapper,
     private val memberCouponRepository: MemberCouponRepository,
-    private val couponStockCacheService: CouponStockCacheService
+    private val couponStockCacheService: CouponStockCacheService,
+    private val transactionTemplate: TransactionTemplate
 ) : CouponIssueService {
 
     private val log = LoggerFactory.getLogger(this::class.java)
@@ -131,12 +133,10 @@ class CouponIssuer(
                 stockCache.decreaseStock(couponId)
 
                 // 3. DB 저장 (테스트 위해 주석 처리 상태 유지)
-                /*
                 transactionTemplate.execute {
                     decreaseStockDB(couponId)
                     saveMemberCoupon(memberId, couponId)
                 }
-                */
 
                 // 4. 성공 알림 전송
                 sendCouponSuccessToRedis(eventId, couponId)
@@ -192,6 +192,7 @@ class CouponIssuer(
                 deferred.await() // 여기서 답이 올 때까지 멈춤 (Blocking 아님)
             }
         } catch (e: TimeoutCancellationException) {
+            log.error("60초 타임아웃 에러 발생" + e.message)
             throw TimeoutException("Redis 응답 시간 초과 (15초)")
         } finally {
             // 4. 성공하든 실패하든 맵에서 제거 (메모리 누수 방지)
