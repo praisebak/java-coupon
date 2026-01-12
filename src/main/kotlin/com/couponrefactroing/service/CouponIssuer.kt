@@ -33,14 +33,11 @@ import java.util.concurrent.TimeoutException
 @Component
 class CouponIssuer(
     private val couponRepository: CouponRepository,
-    private val memberCouponRepository: MemberCouponRepository,
     private val memberFrontmen: MemberFrontMen,
     private val stockCache: CouponStockCacheService,
     private val duplicateChecker: CouponIssueDuplicateChecker,
     private val reactiveRedisTemplate: ReactiveRedisTemplate<String, String>,
-    private val stringRedisTemplate: StringRedisTemplate, // 사용 안하면 제거 가능
     private val kafkaTemplate: KafkaTemplate<String, IssueCouponEvent>,
-    private val transactionTemplate: TransactionTemplate,
     private val objectMapper: ObjectMapper
 ) : CouponIssueService {
 
@@ -57,18 +54,14 @@ class CouponIssuer(
     @PostConstruct
     fun startGlobalRedisListener() {
         reactiveRedisTemplate.listenTo(ChannelTopic("coupon-completion-topic"))
-            .map { it.message } // 메시지 본문 추출
+            .map { it.message }
             .doOnNext { message ->
                 try {
-                    // 메시지에서 ID 추출 (JSON 파싱 비용 최소화 위해 필요한 필드만 보시거나, 여기서 파싱)
                     val rootNode = objectMapper.readTree(message)
                     val correlationId = rootNode.path("correlationId").asText()
 
-                    // ⭐ 대기 중인 녀석이 있으면 깨워준다 (값 넣어주고 완료 처리)
-                    // remove를 여기서 바로 하지 않는 이유는 await() 쪽에서 확실히 받고 지우기 위함(선택 사항)
                     pendingRequests[correlationId]?.complete(message)
                 } catch (e: Exception) {
-                    // 파싱 에러 등은 로그만 찍고 넘어감 (리스너가 죽으면 안됨)
                     println("Redis Listener Error: ${e.message}")
                 }
             }
@@ -193,7 +186,7 @@ class CouponIssuer(
         pendingRequests[correlationId] = deferred
 
         try {
-            // 3. 15초 동안 답이 올 때까지 '일시 중단' (스레드는 다른 일 하러 감!)
+            // 3. 60초 동안 답이 올 때까지 '일시 중단' (스레드는 다른 일 하러 감!)
             return withTimeout(60000) {
                 deferred.await() // 여기서 답이 올 때까지 멈춤 (Blocking 아님)
             }
@@ -203,6 +196,23 @@ class CouponIssuer(
             // 4. 성공하든 실패하든 맵에서 제거 (메모리 누수 방지)
             pendingRequests.remove(correlationId)
         }
+    }
+
+    suspend fun issueWithWait(
+        couponId: Long,
+        memberId: Long,
+        correlationId: String
+    ): String = coroutineScope {
+
+        val responseDeferred = async {
+            withTimeout(5000) {
+                waitUntilSseResponse(correlationId)
+            }
+        }
+
+        issueCoupon(couponId, memberId, correlationId)
+
+        return@coroutineScope responseDeferred.await()
     }
 
     // --- [5] Helper Methods (기존 로직 유지) ---

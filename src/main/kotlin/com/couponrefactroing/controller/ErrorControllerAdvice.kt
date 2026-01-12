@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
 @RestControllerAdvice
 class ErrorControllerAdvice {
 
-    @ExceptionHandler(value = [IllegalArgumentException::class, IllegalStateException::class])
+    @ExceptionHandler(value = [IllegalArgumentException::class, IllegalStateException::class, Exception::class])
     fun illegalException(e: RuntimeException): ResponseEntity<String> {
         return ResponseEntity
             .status(HttpStatus.BAD_REQUEST)
