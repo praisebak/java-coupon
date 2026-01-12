@@ -30,7 +30,7 @@ class CouponStockCacheService(
      * 쿠폰 재고 초기화
      * 쿠폰 생성 시 또는 재고 리셋 시 사용
      */
-    suspend fun initializeStock(couponId: Long, quantity: Int) {
+    suspend fun setStock(couponId: Long, quantity: Int) {
         cacheOps.set(stockKey(couponId), quantity.toString())
     }
 

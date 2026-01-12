@@ -1,10 +1,13 @@
 package com.couponrefactroing.domain
 
 import jakarta.persistence.*
+import org.springframework.core.annotation.MergedAnnotationPredicates.unique
 import java.time.LocalDateTime
 
 @Entity
-@Table(name = "coupons")
+@Table(name = "coupons", indexes = [
+    Index(name = "idx_coupon_valid_period", columnList = "validEndedAt, validStartedAt")
+])
 class Coupon(
     title: String,
     discountAmount: Int,

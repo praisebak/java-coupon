@@ -2,7 +2,9 @@ package com.couponrefactroing.service
 
 import com.couponrefactroing.cache.CouponIssueDuplicateChecker
 import com.couponrefactroing.cache.CouponStockCacheService
+import com.couponrefactroing.cache.RedisCacheOperations
 import com.couponrefactroing.domain.Coupon
+import com.couponrefactroing.domain.MemberCoupon
 import com.couponrefactroing.dto.CouponAddRequest
 import com.couponrefactroing.dto.IssueCouponEvent
 import com.couponrefactroing.repository.CouponRepository
@@ -11,15 +13,13 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.*
 import kotlinx.coroutines.reactive.awaitSingle
-import kotlinx.coroutines.reactive.collect
 import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.ReactiveRedisTemplate
-import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.listener.ChannelTopic
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.kafka.core.KafkaTemplate
+import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
-import org.springframework.transaction.support.TransactionTemplate
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeoutException
@@ -38,7 +38,9 @@ class CouponIssuer(
     private val duplicateChecker: CouponIssueDuplicateChecker,
     private val reactiveRedisTemplate: ReactiveRedisTemplate<String, String>,
     private val kafkaTemplate: KafkaTemplate<String, IssueCouponEvent>,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val memberCouponRepository: MemberCouponRepository,
+    private val couponStockCacheService: CouponStockCacheService
 ) : CouponIssueService {
 
     private val log = LoggerFactory.getLogger(this::class.java)
@@ -100,7 +102,7 @@ class CouponIssuer(
             val savedCoupon = couponRepository.save(coupon)
             val couponId = savedCoupon.id ?: throw IllegalStateException("쿠폰 생성 실패")
 
-            stockCache.initializeStock(couponId, savedCoupon.totalQuantity)
+            stockCache.setStock(couponId, savedCoupon.totalQuantity)
             couponId
         }
     }
@@ -122,9 +124,8 @@ class CouponIssuer(
             val eventId = issueCouponEvent.eventId
 
             try {
-                // 1. 유효성 검사 (필요시 주석 해제)
-                // memberFrontmen.validateExistMember(memberId)
-                // validateAlreadyAssignedCoupon(couponId, memberId)
+                 memberFrontmen.validateExistMember(memberId)
+                 validateAlreadyAssignedCoupon(couponId, memberId)
 
                 // 2. 재고 감소 (Redis)
                 stockCache.decreaseStock(couponId)
@@ -215,8 +216,6 @@ class CouponIssuer(
         return@coroutineScope responseDeferred.await()
     }
 
-    // --- [5] Helper Methods (기존 로직 유지) ---
-    /*
     private fun saveMemberCoupon(memberId: Long, couponId: Long) {
         val now = LocalDateTime.now()
         val memberCoupon = MemberCoupon(
@@ -242,16 +241,21 @@ class CouponIssuer(
             throw IllegalArgumentException("이미 발급받은 쿠폰입니다.")
         }
     }
-    */
 
-    // 필요 시 스케줄러 복구
-    /*
-    @Scheduled(cron = "0 * * * * *")
+    //1분마다 Redis에 데이터 정합성을 보장해준다
+    //쿠폰은 많지않으니까 괜찮을수도있다
+    @Scheduled(cron = "5 * * * * *")
     fun fulfillCouponScheduler(){
         CoroutineScope(Dispatchers.IO).launch {
-            val coupons = couponRepository.findAllByTotalQuantityAfter(0)
-            // ... 로직
+            val now = LocalDateTime.now();
+            val coupons = couponRepository.findByValidStartedAtLessThanEqualAndValidEndedAtGreaterThanEqual(now,now)
+            coupons.forEach { coupon ->
+                coupon.id?.let { id ->
+                    val total = coupon.totalQuantity
+                    val remaining = total - coupon.issuedQuantity
+                    couponStockCacheService.setStock(couponId = id, quantity = remaining)
+                }
+            }
         }
     }
-    */
 }
