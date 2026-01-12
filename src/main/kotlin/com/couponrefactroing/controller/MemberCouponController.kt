@@ -35,8 +35,6 @@ class MemberCouponController(
     fun issueCouponSse(@RequestBody request: IssueCouponRequest): Flow<ServerSentEvent<String>> = flow {
         val correlationId = UUID.randomUUID().toString()
 
-        emit(sse("STATUS", "접수 완료 ($correlationId). 처리 중..."))
-
         try {
             val resultJson = couponIssuer.issueWithWait(
                 request.couponId,

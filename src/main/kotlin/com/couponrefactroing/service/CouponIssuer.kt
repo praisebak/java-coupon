@@ -175,10 +175,6 @@ class CouponIssuer(
         reactiveRedisTemplate.convertAndSend(topic.topic, failJson).awaitSingle()
     }
 
-    /**
-     * [핵심 변경] O(N^2) -> O(1) 성능 개선
-     * Map에 내 요청을 등록하고, 리스너가 채워주기를 기다림
-     */
     suspend fun waitUntilSseResponse(correlationId: String): String {
         // 1. 빈 약속 상자(Deferred) 생성
         val deferred = CompletableDeferred<String>()
@@ -193,7 +189,7 @@ class CouponIssuer(
             }
         } catch (e: TimeoutCancellationException) {
             log.error("60초 타임아웃 에러 발생" + e.message)
-            throw TimeoutException("Redis 응답 시간 초과 (15초)")
+            throw TimeoutException("Redis 응답 시간 초과 (60초)")
         } finally {
             // 4. 성공하든 실패하든 맵에서 제거 (메모리 누수 방지)
             pendingRequests.remove(correlationId)
@@ -245,18 +241,18 @@ class CouponIssuer(
 
     //1분마다 Redis에 데이터 정합성을 보장해준다
     //쿠폰은 많지않으니까 괜찮을수도있다
-    @Scheduled(cron = "5 * * * * *")
-    fun fulfillCouponScheduler(){
-        CoroutineScope(Dispatchers.IO).launch {
-            val now = LocalDateTime.now();
-            val coupons = couponRepository.findByValidStartedAtLessThanEqualAndValidEndedAtGreaterThanEqual(now,now)
-            coupons.forEach { coupon ->
-                coupon.id?.let { id ->
-                    val total = coupon.totalQuantity
-                    val remaining = total - coupon.issuedQuantity
-                    couponStockCacheService.setStock(couponId = id, quantity = remaining)
-                }
-            }
-        }
-    }
+//    @Scheduled(cron = "5 * * * * *")
+//    fun fulfillCouponScheduler(){
+//        CoroutineScope(Dispatchers.IO).launch {
+//            val now = LocalDateTime.now();
+//            val coupons = couponRepository.findByValidStartedAtLessThanEqualAndValidEndedAtGreaterThanEqual(now,now)
+//            coupons.forEach { coupon ->
+//                coupon.id?.let { id ->
+//                    val total = coupon.totalQuantity
+//                    val remaining = total - coupon.issuedQuantity
+//                    couponStockCacheService.setStock(couponId = id, quantity = remaining)
+//                }
+//            }
+//        }
+//    }
 }
