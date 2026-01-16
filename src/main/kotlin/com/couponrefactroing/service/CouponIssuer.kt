@@ -9,6 +9,7 @@ import com.couponrefactroing.dto.CouponAddRequest
 import com.couponrefactroing.dto.IssueCouponEvent
 import com.couponrefactroing.repository.CouponRepository
 import com.couponrefactroing.repository.MemberCouponRepository
+import com.couponrefactroing.util.PerfTraceRegistry
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.*
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.TimeoutException
 
 /**
@@ -42,14 +44,44 @@ class CouponIssuer(
     private val objectMapper: ObjectMapper,
     private val memberCouponRepository: MemberCouponRepository,
     private val couponStockCacheService: CouponStockCacheService,
-    private val transactionTemplate: TransactionTemplate
+    private val transactionTemplate: TransactionTemplate,
+    private val perfTraceRegistry: PerfTraceRegistry
 ) : CouponIssueService {
 
     private val log = LoggerFactory.getLogger(this::class.java)
+    private val totalTimeouts = AtomicLong(0)
 
     // [핵심] 대기 중인 요청을 저장하는 우편함 (Key: correlationId, Value: 응답받을 Future)
     private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<String>>()
     private val topic = ChannelTopic("coupon-completion-topic")
+
+    private inline fun <T> measureMillis(
+        label: String,
+        correlationId: String?,
+        block: () -> T
+    ): T {
+        val start = System.nanoTime()
+        try {
+            return block()
+        } finally {
+            val elapsedMs = (System.nanoTime() - start) / 1_000_000
+            perfTraceRegistry.record(correlationId, label, elapsedMs)
+        }
+    }
+
+    private suspend fun <T> measureMillisSuspend(
+        label: String,
+        correlationId: String?,
+        block: suspend () -> T
+    ): T {
+        val start = System.nanoTime()
+        try {
+            return block()
+        } finally {
+            val elapsedMs = (System.nanoTime() - start) / 1_000_000
+            perfTraceRegistry.record(correlationId, label, elapsedMs)
+        }
+    }
 
     /**
      * [초기화] Redis 리스너를 단 하나만 실행 (Dispatcher 역할)
@@ -111,39 +143,78 @@ class CouponIssuer(
 
     // --- [2] 쿠폰 발급 요청 (Producer) ---
     override suspend fun issueCoupon(couponId: Long, memberId: Long, correlationId: String): String {
-        val event = IssueCouponEvent(memberId, couponId, correlationId)
-        kafkaTemplate.send("issue-coupon", event)
+        val event = IssueCouponEvent(
+            memberId = memberId,
+            couponId = couponId,
+            eventId = correlationId,
+            enqueuedAt = System.currentTimeMillis()
+        )
+        measureMillis("kafka_send_enqueue_ms", correlationId) {
+            kafkaTemplate.send("issue-coupon", event)
+        }
         return correlationId
     }
 
     // --- [3] 쿠폰 발급 처리 (Consumer) ---
-    @KafkaListener(topicPattern = "issue-coupon", concurrency = "20")
+    @KafkaListener(topicPattern = "issue-coupon", concurrency = "5")
     suspend fun processCouponIssue(issueCouponEvent: IssueCouponEvent) {
         // KafkaListener는 기본적으로 별도 스레드지만, IO 작업을 명시
-        withContext(Dispatchers.IO) {
-            val memberId = issueCouponEvent.memberId
-            val couponId = issueCouponEvent.couponId
-            val eventId = issueCouponEvent.eventId
+        val processingStart = System.nanoTime()
+        val nowMs = System.currentTimeMillis()
+        val enqueueLagMs = nowMs - issueCouponEvent.enqueuedAt
+        if (enqueueLagMs >= 1_000L) {
+            log.info(
+                "PERF_CONSUMER_LAG eventId={} enqueueLagMs={}",
+                issueCouponEvent.eventId,
+                enqueueLagMs
+            )
+        }
 
-            try {
-                 memberFrontmen.validateExistMember(memberId)
-                 validateAlreadyAssignedCoupon(couponId, memberId)
+        try {
+            withContext(Dispatchers.IO) {
+                val memberId = issueCouponEvent.memberId
+                val couponId = issueCouponEvent.couponId
+                val eventId = issueCouponEvent.eventId
 
-                // 2. 재고 감소 (Redis)
-                stockCache.decreaseStock(couponId)
+                try {
+                    measureMillis("validate_member_and_duplicate_ms", eventId) {
+                        memberFrontmen.validateExistMember(memberId)
+                        validateAlreadyAssignedCoupon(couponId, memberId)
+                    }
 
-                // 3. DB 저장 (테스트 위해 주석 처리 상태 유지)
-                transactionTemplate.execute {
-                    decreaseStockDB(couponId)
-                    saveMemberCoupon(memberId, couponId)
+                    // 2. 재고 감소 (Redis)
+                    measureMillis("redis_decrease_stock_ms", eventId) {
+                        stockCache.decreaseStock(couponId)
+                    }
+
+                    // 3. DB 저장 (테스트 위해 주석 처리 상태 유지)
+                    measureMillis("db_issue_coupon_tx_ms", eventId) {
+                        transactionTemplate.execute {
+                            decreaseStockDB(couponId)
+                            saveMemberCoupon(memberId, couponId)
+                        }
+                    }
+
+                    // 4. 성공 알림 전송
+                    measureMillisSuspend("redis_publish_success_ms", eventId) {
+                        sendCouponSuccessToRedis(eventId, couponId)
+                    }
+
+                } catch (e: Exception) {
+                    duplicateChecker.clearMark(couponId, memberId)
+                    measureMillisSuspend("redis_publish_fail_ms", eventId) {
+                        sendCouponFailureToRedis(eventId, couponId)
+                    }
                 }
-
-                // 4. 성공 알림 전송
-                sendCouponSuccessToRedis(eventId, couponId)
-
-            } catch (e: Exception) {
-                duplicateChecker.clearMark(couponId, memberId)
-                sendCouponFailureToRedis(eventId, couponId)
+            }
+        } finally {
+            val processingMs = (System.nanoTime() - processingStart) / 1_000_000
+            if (processingMs >= 1_000L) {
+                log.info(
+                    "PERF_CONSUMER_PROCESS eventId={} processMs={}",
+                    issueCouponEvent.eventId,
+                    processingMs
+                )
             }
         }
     }
@@ -184,12 +255,15 @@ class CouponIssuer(
 
         try {
             // 3. 60초 동안 답이 올 때까지 '일시 중단' (스레드는 다른 일 하러 감!)
-            return withTimeout(60000) {
-                deferred.await() // 여기서 답이 올 때까지 멈춤 (Blocking 아님)
+            return measureMillisSuspend("redis_wait_response_ms", correlationId) {
+                withTimeout(60000) {
+                    deferred.await() // 여기서 답이 올 때까지 멈춤 (Blocking 아님)
+                }
             }
         } catch (e: TimeoutCancellationException) {
-            log.error("60초 타임아웃 에러 발생" + e.message)
-            throw TimeoutException("Redis 응답 시간 초과 (60초)")
+            val timeoutCount = totalTimeouts.incrementAndGet()
+            log.error("타임아웃 에러 발생 totalTimeouts={}", timeoutCount)
+            throw TimeoutException("Redis 응답 시간 초과")
         } finally {
             // 4. 성공하든 실패하든 맵에서 제거 (메모리 누수 방지)
             pendingRequests.remove(correlationId)
@@ -208,7 +282,9 @@ class CouponIssuer(
             }
         }
 
-        issueCoupon(couponId, memberId, correlationId)
+        measureMillisSuspend("issue_request_enqueue_ms", correlationId) {
+            issueCoupon(couponId, memberId, correlationId)
+        }
 
         return@coroutineScope responseDeferred.await()
     }

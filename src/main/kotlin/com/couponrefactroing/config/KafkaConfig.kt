@@ -7,10 +7,11 @@ import org.springframework.kafka.config.TopicBuilder
 
 @Configuration
 class KafkaConfig {
+
     @Bean
     fun issueCouponTopic(): NewTopic {
         return TopicBuilder.name("issue-coupon")
-            .partitions(20)
+            .partitions(4)
             .replicas(1)
             .build()
     }
