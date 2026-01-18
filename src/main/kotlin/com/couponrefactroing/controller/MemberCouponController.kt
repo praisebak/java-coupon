@@ -3,13 +3,11 @@ package com.couponrefactroing.controller
 import com.couponrefactroing.dto.IssueCouponRequest
 import com.couponrefactroing.dto.MemberCouponResponse
 import com.couponrefactroing.dto.UseCouponRequest
-import com.couponrefactroing.service.CouponIssuer
+import com.couponrefactroing.service.CouponIssueManager
 import com.couponrefactroing.service.MemberCouponService
-import com.couponrefactroing.util.PerfTraceRegistry
+import com.couponrefactroing.util.PerformanceTraceRegistry
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import org.slf4j.Logger
@@ -18,15 +16,14 @@ import org.springframework.http.MediaType
 import org.springframework.http.codec.ServerSentEvent
 import org.slf4j.LoggerFactory
 import java.util.UUID
-import java.util.concurrent.TimeoutException
 
 @RestController
 @RequestMapping("/member-coupons")
 class MemberCouponController(
     private val memberCouponService: MemberCouponService,
-    private val couponIssuer: CouponIssuer,
+    private val couponIssueManager: CouponIssueManager,
     private val objectMapper: ObjectMapper,
-    private val perfTraceRegistry: PerfTraceRegistry
+    private val performanceTraceRegistry: PerformanceTraceRegistry
 ) {
     private val log: Logger = LoggerFactory.getLogger(MemberCouponController::class.java)
 
@@ -37,13 +34,12 @@ class MemberCouponController(
         var outcome = "SUCCESS"
 
         try {
-            val resultJson = couponIssuer.issueWithWait(
+            val resultJson = couponIssueManager.issueCoupon(
                 request.couponId,
                 request.memberId,
                 correlationId
             )
             emit(sse("RESULT", resultJson))
-
         } catch (e: Exception) {
             outcome = "ERROR"
             val (code, message) = when (e) {
@@ -55,7 +51,7 @@ class MemberCouponController(
             emit(sse("ERROR", errorJson))
         } finally {
             val totalElapsedMs = (System.nanoTime() - start) / 1_000_000
-            perfTraceRegistry.summarizeAndClear(correlationId, outcome, totalElapsedMs)
+            performanceTraceRegistry.summarizeAndClear(correlationId, outcome, totalElapsedMs)
             emit(sse("COMPLETE", "END"))
         }
     }

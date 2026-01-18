@@ -82,7 +82,7 @@ class CouponIssuerNonCached(
      * @throws ObjectOptimisticLockingFailureException 동시성 충돌 (재시도 필요)
      */
     @Transactional
-    override suspend fun issueCoupon(couponId: Long, memberId: Long,eventId : String): String {
+    override suspend fun issueCoupon(couponId: Long, memberId: Long,eventId : String) {
         return withContext(Dispatchers.IO) {
             try {
                 // 1. 멤버 존재 확인
