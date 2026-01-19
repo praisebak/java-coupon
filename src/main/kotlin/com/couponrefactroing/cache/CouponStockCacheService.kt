@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service
 class CouponStockCacheService(
     private val cacheOps: CacheOperations
 ) {
+
     /**
      * 쿠폰 재고 차감 (원자적 연산)
      * @return 차감 후 남은 재고 수량
@@ -41,14 +42,28 @@ class CouponStockCacheService(
         return cacheOps.get(stockKey(couponId))?.toLongOrNull()
     }
 
-    /**
-     * 재고 존재 여부 확인
-     */
-    suspend fun hasStock(couponId: Long): Boolean {
-        return cacheOps.exists(stockKey(couponId))
+    private fun duplicateKey(couponId: Long, memberId: Long) =
+        "coupon:issue:$couponId:member:$memberId"
+
+    suspend fun validateAlreadyAssignedCoupon(couponId: Long, memberId: Long) {
+        val key = duplicateKey(couponId, memberId)
+        val successSet = cacheOps.setIfAbsent(key, "1", ttlSeconds = TTL_SECONDS)
+
+        if(!successSet){
+            throw IllegalArgumentException("이미 발급받은 쿠폰입니다.")
+        }
+    }
+
+    suspend fun checkAndMark(couponId: Long, memberId: Long): Boolean {
+        val key = duplicateKey(couponId, memberId)
+        return cacheOps.setIfAbsent(key, "1", ttlSeconds = TTL_SECONDS)
     }
 
     private fun stockKey(couponId: Long) = "coupon:stock:$couponId"
+
+    companion object {
+        private const val TTL_SECONDS = 86400L
+    }
 }
 
 

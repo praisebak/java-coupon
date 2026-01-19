@@ -9,6 +9,7 @@ import com.couponrefactroing.repository.CouponRepository
 import com.couponrefactroing.repository.MemberCouponRepository
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.annotation.PostConstruct
+import jakarta.transaction.Transactional
 import kotlinx.coroutines.*
 import kotlinx.coroutines.reactive.awaitSingle
 import org.slf4j.LoggerFactory
@@ -31,35 +32,10 @@ class CouponIssuer(
     private val couponRepository: CouponRepository,
     private val memberFrontmen: MemberFrontMen,
     private val couponStockManager: CouponStockCacheService,
-    private val duplicateChecker: CouponIssueDuplicateChecker,
-    private val reactiveRedisTemplate: ReactiveRedisTemplate<String, String>,
-    private val objectMapper: ObjectMapper,
-    private val memberCouponRepository: MemberCouponRepository,
-    private val couponStockCacheService: CouponStockCacheService,
-    private val transactionTemplate: TransactionTemplate,
+    private val memberCouponRepository: MemberCouponRepository
 ) : CouponIssueService {
 
     private val log = LoggerFactory.getLogger(this::class.java)
-    private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<String>>()
-    private val topic = ChannelTopic("coupon-completion-topic")
-
-
-    @PostConstruct
-    fun startGlobalRedisListener() {
-        reactiveRedisTemplate.listenTo(ChannelTopic("coupon-completion-topic"))
-            .map { it.message }
-            .doOnNext { message ->
-                try {
-                    val rootNode = objectMapper.readTree(message)
-                    val correlationId = rootNode.path("correlationId").asText()
-
-                    pendingRequests[correlationId]?.complete(message)
-                } catch (e: Exception) {
-                    println("Redis Listener Error: ${e.message}")
-                }
-            }
-            .subscribe()
-    }
 
     override suspend fun addCoupon(memberId: Long, couponInformation: CouponAddRequest): Long {
         return withContext(Dispatchers.IO) {
@@ -83,72 +59,14 @@ class CouponIssuer(
         }
     }
 
-    override suspend fun issueCoupon(couponId: Long,
-                            memberId: Long,
-                            eventId: String) {
-        val processingStart = System.nanoTime()
+    @Transactional
+    override fun issueCoupon(couponId: Long, memberId: Long, eventId: String) {
+            memberFrontmen.validateExistMember(memberId)
 
-        try {
-            try {
-                memberFrontmen.validateExistMember(memberId)
-                validateAlreadyAssignedCoupon(couponId, memberId)
-
-                coroutineScope {
-                    val redisDeferred = async {
-                        couponStockManager.decreaseStock(couponId)
-                    }
-
-                    val dbDeferred = async {
-                        transactionTemplate.execute {
-                            decreaseStockDB(couponId)
-                            saveMemberCoupon(memberId, couponId)
-                        }
-                    }
-
-                    redisDeferred.await()
-                    dbDeferred.await()
-                }
-
-                sendCouponSuccessToRedis(eventId, couponId)
-            } catch (e: Exception) {
-                duplicateChecker.clearMark(couponId, memberId)
-                sendCouponFailureToRedis(eventId, couponId)
-            }
-        } finally {
-            val processingMs = (System.nanoTime() - processingStart) / 1_000_000
-            if (processingMs >= 1_000L) {
-                log.info(
-                    "PERF_CONSUMER_PROCESS eventId={} processMs={}",
-                    eventId,
-                    processingMs
-                )
-            }
-        }
+            decreaseStockDB(couponId)
+            saveMemberCoupon(memberId, couponId)
     }
 
-    suspend fun sendCouponSuccessToRedis(eventId: String, savedCouponId: Long?) {
-        val successJson = """
-            {
-                "correlationId": "$eventId",
-                "status": "RESULT",
-                "data": { "couponId": $savedCouponId }
-            }
-        """.trimIndent()
-
-        reactiveRedisTemplate.convertAndSend(topic.topic, successJson).awaitSingle()
-    }
-
-    private suspend fun sendCouponFailureToRedis(eventId: String, couponId: Long) {
-        val failJson = """
-            {
-                "correlationId": "$eventId",
-                "status": "RESULT",
-                "message": "Fail $couponId"
-            }
-        """.trimIndent()
-
-        reactiveRedisTemplate.convertAndSend(topic.topic, failJson).awaitSingle()
-    }
 
     private fun saveMemberCoupon(memberId: Long, couponId: Long) {
         val now = LocalDateTime.now()
@@ -166,28 +84,6 @@ class CouponIssuer(
         val updatedRows = couponRepository.increaseIssuedQuantity(couponId)
         if (updatedRows != 1) {
             throw IllegalStateException("이미 모두 발급된 쿠폰입니다.")
-        }
-    }
-
-    private suspend fun validateAlreadyAssignedCoupon(couponId: Long, memberId: Long) {
-        val canIssue = duplicateChecker.checkAndMark(couponId, memberId)
-        if (!canIssue) {
-            throw IllegalArgumentException("이미 발급받은 쿠폰입니다.")
-        }
-    }
-
-    @Scheduled(cron = "5 * * * * *")
-    fun fulfillCouponScheduler(){
-        CoroutineScope(Dispatchers.IO).launch {
-            val now = LocalDateTime.now();
-            val coupons = couponRepository.findByValidStartedAtLessThanEqualAndValidEndedAtGreaterThanEqual(now,now)
-            coupons.forEach { coupon ->
-                coupon.id?.let { id ->
-                    val total = coupon.totalQuantity
-                    val remaining = total - coupon.issuedQuantity
-                    couponStockCacheService.setStock(couponId = id, quantity = remaining)
-                }
-            }
         }
     }
 }

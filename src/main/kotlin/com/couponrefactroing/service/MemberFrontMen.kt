@@ -8,9 +8,9 @@ import org.springframework.stereotype.Component
 class MemberFrontMen(
     private val memberRepository: MemberRepository
 ) {
-    suspend fun validateExistMember(memberId: Long) {
-        memberRepository.findById(memberId).orElseThrow { 
-            UserFlowException("존재하지 않는 멤버입니다.") 
+    fun validateExistMember(memberId: Long) {
+        memberRepository.findById(memberId).orElseThrow {
+            UserFlowException("존재하지 않는 멤버입니다.")
         }
     }
 }

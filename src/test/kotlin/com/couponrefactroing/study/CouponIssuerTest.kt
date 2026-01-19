@@ -1,5 +1,6 @@
 package com.couponrefactroing.study
 
+import com.couponrefactroing.service.CouponIssueFacade
 import com.couponrefactroing.service.CouponIssuer
 import com.ninjasquad.springmockk.MockkBean
 import io.mockk.Runs
@@ -27,7 +28,7 @@ class CouponIssuerIntegrationTest {
 
     // 1. 테스트 대상: 실제 객체를 주입받습니다. (나머지 의존성은 스프링이 알아서 넣어줌)
     @Autowired
-    lateinit var couponIssuer: CouponIssuer
+    lateinit var couponIssuer: CouponIssueFacade
 
     // 2. 조작이 필요한 빈만 가짜(@MockBean)로 교체합니다.
     // 주의: @MockBean은 Mockito 기반이라 Mockk 문법(every)과 섞어 쓰려면 설정이 좀 필요합니다.
